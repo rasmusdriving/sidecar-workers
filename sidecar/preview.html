@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Devin worker</title>
+<style>
+:root{color-scheme:dark;--bg:#111111;--panel:#222222;--line:#ffffff12;--muted:#969696;--text:#ececec}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}header{height:58px;padding:0 24px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;background:#111111ed;backdrop-filter:blur(16px);z-index:2}.brand{display:flex;gap:10px;align-items:center;font-size:13px;font-weight:600}.mark{width:24px;height:24px;border:1px solid #ffffff36;border-radius:7px;display:grid;place-items:center;font:13px ui-monospace,monospace}.muted{color:var(--muted)}.status{font-size:12px;display:flex;align-items:center;gap:7px}.dot{width:6px;height:6px;background:#aaa;border-radius:50%}.running .dot{animation:pulse 1.7s infinite}.complete .dot{background:#8bc7a2}.failed .dot{background:#e6a18f}@keyframes pulse{50%{opacity:.3}}main{max-width:810px;margin:auto;padding:46px 32px 130px}.eyebrow{font-size:12px;color:var(--muted);margin-bottom:5px}h1{font-size:25px;line-height:1.3;letter-spacing:-.7px;font-weight:600;margin:0 0 12px}.metadata{display:flex;gap:8px;flex-wrap:wrap;color:var(--muted);font-size:12px;align-items:center}.pill{border:1px solid #ffffff19;border-radius:6px;padding:1px 7px}.prompt{max-width:85%;margin-left:auto!important;background:#222222;border:1px solid #ffffff08;border-radius:17px;margin:30px 0 34px;padding:15px 19px;white-space:pre-wrap;overflow-wrap:anywhere}.label{font-size:12px;font-weight:600;display:flex;align-items:center;gap:8px;margin-bottom:14px}.spark{font-size:18px}.message{white-space:pre-wrap;overflow-wrap:anywhere;margin:0 0 25px;line-height:1.8}.tool{margin:8px 0 15px;border:1px solid var(--line);border-radius:9px;background:#242424;overflow:hidden}.tool summary{padding:9px 13px;cursor:pointer;list-style:none;display:flex;gap:9px;align-items:center;font-size:12px;color:#b8b8b8}.tool summary::before{content:'›';color:#888}.tool[open] summary::before{transform:rotate(90deg)}.tool .state{margin-left:auto;color:#868686;font-size:11px}.tool pre{margin:0;padding:12px 15px;border-top:1px solid var(--line);font:11px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace;color:#b4b4b4;overflow:auto;max-height:350px;white-space:pre-wrap;overflow-wrap:anywhere}code{background:#ffffff0b;padding:2px 5px;border-radius:4px;font:12px ui-monospace,SFMono-Regular,Menlo,monospace}.message pre{padding:15px;background:#181818;border:1px solid var(--line);border-radius:8px;overflow:auto}.message pre code{padding:0;background:none}.empty{color:var(--muted);font-size:13px}.footer{position:fixed;bottom:0;left:0;right:0;background:linear-gradient(transparent,var(--bg) 30%);padding:35px 24px 20px;pointer-events:none}.footer-inner{max-width:746px;margin:auto;display:flex;justify-content:space-between;align-items:center;color:#858585;font-size:11px}.follow{pointer-events:auto;border:1px solid #ffffff25;border-radius:7px;background:#303030;padding:5px 10px;color:#ddd;cursor:pointer;font:inherit}.error{color:#e6a18f;white-space:pre-wrap} @media(max-width:500px){header{padding:0 17px}main{padding:28px 18px 110px}h1{font-size:22px}.metadata{font-size:11px}.footer{padding-inline:18px}}
+
+/* Activity follows the compact, unboxed rhythm of the Codex conversation. */
+.work-time{color:#898989;font-size:12px;margin:32px 0 23px}
+.message{font-size:14px;line-height:1.75;margin:20px 0 26px}
+.tool{margin:15px 0 23px;border:0;border-radius:0;background:none;overflow:visible}
+.tool summary{padding:2px 0;gap:7px;font-size:12px;color:#929292;line-height:1.6;min-height:24px}
+.tool summary:hover{color:#d0d0d0}.tool summary:focus-visible{outline:1px solid #888;outline-offset:4px;border-radius:3px}
+.tool summary::before{display:none}.tool summary::-webkit-details-marker{display:none}
+.tool summary::after{content:'›';font-size:15px;opacity:0;transition:opacity .15s;flex-shrink:0}
+.tool summary:hover::after,.tool[open]>summary::after{opacity:1}.tool[open]>summary::after{transform:rotate(90deg)}
+.tool-icon{display:inline-flex;width:13px;height:13px;flex-shrink:0}.tool-icon svg{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:1.35;stroke-linecap:round;stroke-linejoin:round}
+.tool-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.tool .state{margin-left:3px;font-size:11px;color:#b9887b}
+.tool-body{margin:9px 0 0 6px;padding:3px 0 4px 15px;border-left:1px solid #ffffff1a}
+.tool-body .tool{margin:5px 0 12px}.tool pre{border:0;border-radius:5px;background:#1a1a1a;margin:7px 0;padding:10px 12px;max-height:280px;color:#aaa}
+.thinking{font-size:12px;color:#969696;margin:23px 0;animation:pulse 2s infinite}.thinking[hidden]{display:none}
+@media(prefers-reduced-motion:reduce){.thinking,.running .dot{animation:none}}
+
+.worker-bar{position:sticky;top:58px;z-index:2;background:#111111f5;border-bottom:1px solid var(--line);padding:10px 24px;display:flex;align-items:center;gap:16px}
+.worker-list{display:flex;gap:7px;overflow-x:auto;padding:3px;flex-shrink:0;max-width:65%}.worker-button{position:relative;display:grid;place-items:center;width:33px;height:33px;flex-shrink:0;border:1px solid transparent;border-radius:9px;background:#1b1b1b;color:#888;cursor:pointer;font:12px -apple-system,BlinkMacSystemFont,sans-serif}
+.worker-button:hover{background:#282828;color:#ddd}.worker-button[aria-pressed="true"]{border-color:#ffffff45;background:#2b2b2b;color:#eee}.worker-button:focus-visible{outline:2px solid #aaa;outline-offset:2px}.worker-button .tool-icon{width:16px;height:16px}.worker-button .dot{position:absolute;right:2px;bottom:2px;width:5px;height:5px;box-shadow:0 0 0 2px #171717}.worker-number{position:absolute;top:0;right:3px;font-size:8px;line-height:10px}.worker-current{min-width:0;font-size:12px;line-height:1.5}.worker-current strong{display:block;color:#bdbdbd;font-weight:500;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.worker-count{font-size:11px;color:#777}
+@media(max-width:500px){.worker-bar{padding:8px 14px;gap:10px}.worker-list{max-width:60%}}
+.provider-letter{font-size:13px;font-weight:600;color:inherit}
+</style></head><body>
+<header><div class="brand"><span class="mark">⌘</span><span>Sidecar <span class="muted">/ Workers</span></span></div><div id="status" class="status running"><span class="dot"></span><span id="status-text">Connecting</span></div></header><nav class="worker-bar" aria-label="Agent workers"><div class="worker-list" id="workers"></div><div class="worker-current"><strong id="selected-worker">Workers</strong><span class="worker-count" id="worker-count"></span></div></nav>
+<main><div class="eyebrow" id="repo">Local workspace</div><h1 id="title">Starting worker</h1><div class="metadata"><span class="pill" id="model">SWE-2</span><span id="mode"></span><span>·</span><span id="elapsed">0s</span></div><div class="prompt" id="prompt"></div><div id="work-time" class="work-time">Working</div><div id="activity" aria-live="polite"><div class="empty">Waiting for the worker…</div></div><div id="thinking" class="thinking" hidden>Working…</div><div class="error" id="error"></div></main>
+<div class="footer"><div class="footer-inner"><span id="connection">Live activity · Updates every second</span><button class="follow" id="follow" hidden>↓ Latest activity</button></div></div>
+<script>
+const $=id=>document.getElementById(id);let last='',started=0,finished=0,autoFollow=true;let workerData=[],workerSignature='',selectedId=localStorage.getItem('devin-worker:'+location.pathname)||'';
+function modelLabel(data){const model=data.verified_model||data.model;const name=model.replace('claude-fable-5-1','Fable 5.1').replace('claude-opus-5','Opus 5').replace('swe-2-','SWE-2 ').replace('grok-','Grok ');return (name+(data.effort?' · '+data.effort:'')).replace(/\b(high|max|medium|xhigh)\b/g,v=>v==='xhigh'?'XHigh':v[0].toUpperCase()+v.slice(1))}
+function node(tag,text,cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n}
+// Small, text-only Markdown renderer. Worker output is never interpreted as HTML.
+function inline(parent,text){for(const part of text.split(/(\[[^\]]+\]\([^\n)]+\)|`[^`\n]+`|\*\*[^*]+\*\*)/g)){if(part.startsWith('[')&&/^\[[^\]]+\]\([^)]+\)$/.test(part)){const match=part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);const label=node('code',match[1]);label.title=match[2];parent.append(label)}else if(part.startsWith('`')&&part.endsWith('`'))parent.append(node('code',part.slice(1,-1)));else if(part.startsWith('**')&&part.endsWith('**'))parent.append(node('strong',part.slice(2,-2)));else parent.append(document.createTextNode(part))}}
+function message(text){const el=node('div',undefined,'message');text.split(/(```[\s\S]*?```)/g).forEach(part=>{if(part.startsWith('```')){const pre=node('pre');pre.append(node('code',part.slice(3,-3).replace(/^\w*\n/,'')));el.append(pre)}else inline(el,part)});return el}
+function icon(kind){
+  const paths={agent:'M4 4h8a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z M8 2v2 M5 8h.01 M11 8h.01 M5 11h6',read:'M3 2h6l3 3v8H3z M8 2v4h4 M5 8h5 M5 10h4',edit:'M3 10l7-7 2 2-7 7-3 1z M9 4l2 2',execute:'M2 3h12v10H2z M4 6l2 2-2 2 M8 10h3',tool:'M9 2a4 4 0 0 0-4 5l-3 4a1.5 1.5 0 0 0 2 2l4-4a4 4 0 0 0 5-4l-3 2-2-2z'};
+  const span=node('span',undefined,'tool-icon'),svg=document.createElementNS('http://www.w3.org/2000/svg','svg'),path=document.createElementNS('http://www.w3.org/2000/svg','path');svg.setAttribute('viewBox','0 0 16 16');svg.setAttribute('aria-hidden','true');path.setAttribute('d',paths[kind]||paths.tool);svg.append(path);span.append(svg);return span;
+}
+function toolTitle(item){
+  const input=item.rawInput||{},path=input.file_path||input.target_file||input.path||item.locations?.[0]?.path;
+  const name=path?path.split('/').pop():'';
+  const busy=item.status==='in_progress'||item.status==='pending';
+  if(item.kind==='read')return (busy?'Reading ':'Read ')+(name||'a file');
+  if(item.kind==='edit')return (busy?'Editing ':'Edited ')+(name||'a file');
+  if(item.kind==='execute')return (busy?'Running ':'Ran ')+(input.command||input.command_line||'a command');
+  return item.title||'Used a tool';
+}
+function groupSummary(items){
+  const counts={};items.forEach(t=>{const k=t.kind||'tool';counts[k]=(counts[k]||0)+1});
+  const active=items.some(t=>t.status==='pending'||t.status==='in_progress');
+  if(active)return 'Using '+items.length+' tools';
+  return Object.entries(counts).map(([k,n])=>({read:'Read '+(n===1?'a file':n+' files'),edit:'Edited '+(n===1?'a file':n+' files'),execute:'Ran '+(n===1?'a command':n+' commands')}[k]||'Used '+(n===1?'a tool':n+' tools'))).join(', ');
+}
+function toolRow(item,key,open){
+  const detail=node('details',undefined,'tool');detail.dataset.key=key;detail.open=open.has(key);
+  const summary=node('summary'),title=toolTitle(item);summary.append(icon(item.kind),node('span',title,'tool-title'));summary.title=title;
+  if(item.status==='failed')summary.append(node('span','Failed','state'));
+  detail.append(summary);const body=node('div',undefined,'tool-body');
+  if(item.rawInput)body.append(node('pre',Object.entries(item.rawInput).map(([k,v])=>k+': '+(typeof v==='string'?v:JSON.stringify(v,null,2))).join('\n')));
+  for(const c of item.content||[]){const text=c.content?.text||c.text;if(text)body.append(node('pre',text));else if(c.type==='diff')body.append(node('pre',(c.path||'File change')+'\n\nBefore\n'+(c.oldText||'')+'\n\nAfter\n'+(c.newText||'')));else body.append(node('pre',JSON.stringify(c,null,2)))}
+  detail.append(body);return detail;
+}
+function updateTime(){if(!started)return;const s=Math.max(0,Math.floor((finished||Date.now()/1000)-started));const duration=s<60?s+'s':Math.floor(s/60)+'m '+s%60+'s';$('elapsed').textContent=duration;$('work-time').textContent=(finished?'Worked for ':'Working for ')+duration}
+function render(data){$('title').textContent=data.title;document.title='Agent workers';$('repo').textContent=data.repo.split('/').filter(Boolean).pop();$('repo').title=data.repo;$('prompt').textContent=data.prompt;$('model').textContent=modelLabel(data);$('model').title=data.verified_model?'Verified by Devin session':'Requested model; waiting for session verification';$('mode').textContent=data.mode==='write'?'Can edit files':'Read only';$('status').className='status '+data.status;$('status-text').textContent={running:'Working',complete:'Completed',failed:'Failed',needs_attention:'Needs permission'}[data.status]||data.status;started=data.started;finished=data.finished||0;$('error').textContent=data.error||'';
+const signature=JSON.stringify([data.items,data.status]);if(signature!==last){
+  const open=new Set([...document.querySelectorAll('details[open]')].map(e=>e.dataset.key));
+  const fragment=document.createDocumentFragment();
+  for(let i=0;i<data.items.length;i++){
+    const item=data.items[i];
+    if(item.type==='message'){fragment.append(message(item.text));continue}
+    const group=[item],key=String(i);
+    while(i+1<data.items.length&&data.items[i+1].type==='tool')group.push(data.items[++i]);
+    if(group.length===1)fragment.append(toolRow(item,key,open));
+    else{
+      const detail=node('details',undefined,'tool');detail.dataset.key=key;detail.open=open.has(key);
+      const summary=node('summary');summary.append(icon('tool'),node('span',groupSummary(group),'tool-title'));detail.append(summary);
+      const body=node('div',undefined,'tool-body');group.forEach((t,j)=>body.append(toolRow(t,key+'-'+j,open)));detail.append(body);fragment.append(detail);
+    }
+  }
+  $('activity').replaceChildren(fragment);last=signature;if(autoFollow)window.scrollTo(0,document.body.scrollHeight);
+}
+const active=data.items.filter(i=>i.type==='tool').find(i=>i.status==='in_progress'||i.status==='pending');
+$('thinking').hidden=data.status!=='running';
+$('thinking').textContent=!data.verified_model?'Starting worker…':active?'Working…':'Thinking…';
+updateTime();
+$('connection').textContent=['running','needs_attention'].includes(data.status)?'Live activity · Updates every second':'Result saved locally · '+(data.exit_code===0?'Worker finished':'Worker stopped');}
+window.addEventListener('scroll',()=>{autoFollow=innerHeight+scrollY>=document.body.scrollHeight-100;$('follow').hidden=autoFollow});$('follow').onclick=()=>{autoFollow=true;window.scrollTo({top:document.body.scrollHeight,behavior:'smooth'})};
+function selectWorker(id){selectedId=id;localStorage.setItem('devin-worker:'+location.pathname,id);last='';$('activity').replaceChildren();autoFollow=false;updateWorkers(true);window.scrollTo(0,0)}
+function updateWorkers(force=false){
+  if(!workerData.length){$('title').textContent='Waiting for workers';$('status-text').textContent='Ready';return}
+  if(!workerData.some(w=>w.id===selectedId))selectedId=workerData[0].id;
+  const signature=JSON.stringify(workerData.map(w=>[w.id,w.title,w.status]));
+  if(force||signature!==workerSignature){
+    const fragment=document.createDocumentFragment();workerData.forEach((w,index)=>{
+      const button=node('button',undefined,'worker-button '+w.status);button.type='button';button.setAttribute('aria-label',w.title+' · '+modelLabel(w)+' · '+w.status);button.setAttribute('aria-pressed',String(w.id===selectedId));button.title=w.title+' · '+modelLabel(w)+' · '+w.status;button.append(node('span',({devin:'D',claude:'C',grok:'G'}[w.provider||'devin']),'provider-letter'),node('span',String(index+1),'worker-number'),node('span',undefined,'dot'));button.onclick=()=>selectWorker(w.id);fragment.append(button);
+    });$('workers').replaceChildren(fragment);workerSignature=signature;
+  }
+  const current=workerData.find(w=>w.id===selectedId);$('selected-worker').textContent=current.title;
+  const running=workerData.filter(w=>w.status==='running').length;$('worker-count').textContent=workerData.length+' worker'+(workerData.length===1?'':'s')+' · '+running+' working';render(current);
+}
+async function poll(){if(document.hidden){setTimeout(poll,1000);return}try{const response=await fetch('state',{cache:'no-store'});if(!response.ok)throw Error('HTTP '+response.status);const data=await response.json();workerData=data.workers||[{...data,id:'legacy'}];updateWorkers()}catch(e){$('connection').textContent='Connection lost · Retrying';}setTimeout(poll,1000)}
+setInterval(updateTime,1000);poll();
+</script></body></html>

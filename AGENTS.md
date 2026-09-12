@@ -1,0 +1,1 @@
+Keep the CLI and service portable. No personal paths, credentials, or worker logs in this repository. Preserve task isolation and independent worker lifetimes. Test lifecycle, singleton startup, and recovery before changing service behavior.
