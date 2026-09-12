@@ -75,7 +75,11 @@ class ProcessTests(unittest.TestCase):
         for proc in self.procs:
             if proc.poll() is None:
                 proc.terminate()
-            proc.wait(timeout=5)
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=3)
         if healthy(self.data):
             cfg,_ = endpoint(self.data)
             os.kill(cfg['pid'],signal.SIGTERM)
@@ -85,13 +89,15 @@ class ProcessTests(unittest.TestCase):
 
     def launch_service(self, grace=.25):
         flag = self.data/'app-open'
-        code = 'from pathlib import Path; from sidecar.service import serve; import sys; serve(Path(sys.argv[1]),app_probe=lambda: Path(sys.argv[1],"app-open").exists(),grace=float(sys.argv[2]),check_interval=.05)'
-        p = subprocess.Popen([sys.executable,'-c',code,str(self.data),str(grace)],cwd=ROOT)
+        code = 'import faulthandler; faulthandler.dump_traceback_later(3); from pathlib import Path; from sidecar.service import serve; import sys; serve(Path(sys.argv[1]),app_probe=lambda: Path(sys.argv[1],"app-open").exists(),grace=float(sys.argv[2]),check_interval=.05)'
+        log = self.data / 'test-service.log'
+        with log.open('w') as output:
+            p = subprocess.Popen([sys.executable,'-c',code,str(self.data),str(grace)],cwd=ROOT, stderr=output)
         self.procs.append(p)
         deadline=time.monotonic()+3
         while not healthy(self.data) and time.monotonic()<deadline:
             time.sleep(.02)
-        self.assertTrue(healthy(self.data))
+        self.assertTrue(healthy(self.data), log.read_text())
         return p
 
     def test_server_shutdown_and_same_url_restart(self):
