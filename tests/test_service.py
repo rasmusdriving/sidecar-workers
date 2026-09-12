@@ -112,7 +112,7 @@ class ProcessTests(unittest.TestCase):
 
     def launch_service(self, grace=.25):
         flag = self.data/'app-open'
-        code = 'import faulthandler; faulthandler.dump_traceback_later(3); from pathlib import Path; from sidecar.service import serve; import sys; serve(Path(sys.argv[1]),app_probe=lambda: Path(sys.argv[1],"app-open").exists(),grace=float(sys.argv[2]),check_interval=.05)'
+        code = 'from pathlib import Path; from sidecar.service import serve; import sys; serve(Path(sys.argv[1]),app_probe=lambda: Path(sys.argv[1],"app-open").exists(),grace=float(sys.argv[2]),check_interval=.05)'
         log = self.data / 'test-service.log'
         with log.open('w') as output:
             p = subprocess.Popen([sys.executable,'-c',code,str(self.data),str(grace)],cwd=ROOT, stderr=output)
@@ -142,7 +142,7 @@ class ProcessTests(unittest.TestCase):
         flag.unlink();time.sleep(.2);flag.touch();time.sleep(1)
         self.assertIsNone(p.poll())
         flag.unlink();p.wait(timeout=3)
-        self.assertEqual(p.returncode,0)
+        self.assertEqual(p.returncode,0, (self.data/'test-service.log').read_text() if (self.data/'test-service.log').exists() else '')
 
     def test_worker_survives_service_restart(self):
         tid=str(uuid.uuid4());job=self.data/'threads'/tid/('devin-'+uuid.uuid4().hex)
@@ -169,7 +169,7 @@ class ProcessTests(unittest.TestCase):
         values=[]
         for p in processes:
             out,_=p.communicate(timeout=10)
-            self.assertEqual(p.returncode,0)
+            self.assertEqual(p.returncode,0, (self.data/'test-service.log').read_text() if (self.data/'test-service.log').exists() else '')
             values.append(json.loads(out))
         self.assertEqual(len({v['pid'] for v in values}),1)
 
