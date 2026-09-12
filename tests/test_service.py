@@ -18,6 +18,14 @@ from sidecar.service import Manager, thread_state
 
 
 class LifecycleTests(unittest.TestCase):
+    def test_server_startup_never_performs_reverse_dns(self):
+        from http.server import BaseHTTPRequestHandler
+        from sidecar.service import LoopbackServer
+        with patch('socket.getfqdn', side_effect=AssertionError('unexpected DNS')):
+            with LoopbackServer(('127.0.0.1', 0), BaseHTTPRequestHandler) as server:
+                self.assertEqual(server.server_name, '127.0.0.1')
+                self.assertGreater(server.server_port, 0)
+
     def test_reopening_cancels_shutdown(self):
         life = Lifecycle(60)
         self.assertFalse(life.should_exit(False, False, 0))

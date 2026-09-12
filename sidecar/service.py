@@ -13,9 +13,18 @@ import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from socketserver import TCPServer
 from .common import ROOT, Lifecycle, active_workers, app_running, atomic, data_dir, identity, thread_dir, worker_alive
 from .activity import snapshot
 from .models import resolve_model
+
+
+class LoopbackServer(ThreadingHTTPServer):
+    def server_bind(self):
+        # HTTPServer normally performs reverse DNS here. This service only uses
+        # 127.0.0.1; DNS must not delay startup or graceful shutdown.
+        TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
 
 
 def prepare(data):
@@ -198,7 +207,7 @@ def serve(data=None, *, app_probe=app_running, grace=60, check_interval=2):
             except (KeyError, ValueError, OSError, StopIteration, subprocess.SubprocessError) as exc:
                 self.reply(400, {'error':str(exc)})
 
-    server = ThreadingHTTPServer(('127.0.0.1', config['port']), Handler)
+    server = LoopbackServer(('127.0.0.1', config['port']), Handler)
     server.daemon_threads = True
     server.timeout = .5
     config.update(port=server.server_port, pid=os.getpid())
