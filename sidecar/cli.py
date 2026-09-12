@@ -85,6 +85,14 @@ def install(data):
     plist.write_bytes(plistlib.dumps(value))
     domain = 'gui/' + str(os.getuid())
     subprocess.run(['launchctl','bootout',domain+'/'+LABEL], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # bootout can return while launchd is still removing a running service.
+    for _ in range(100):
+        state = subprocess.run(['launchctl','print',domain+'/'+LABEL], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if state.returncode != 0:
+            break
+        time.sleep(.05)
+    else:
+        raise RuntimeError('Previous LaunchAgent is still unloading; retry installation shortly.')
     subprocess.run(['launchctl','bootstrap',domain,str(plist)], check=True)
     skill = Path.home() / '.codex/skills/sidecar-workers'
     skill.mkdir(parents=True, exist_ok=True)

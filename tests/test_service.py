@@ -71,6 +71,21 @@ class ManagerTests(unittest.TestCase):
         self.assertEqual(len(thread_state(self.root,self.tid)['workers']),1)
 
 
+class InstallTests(unittest.TestCase):
+    def test_reinstall_waits_for_launchd_unload(self):
+        from sidecar.cli import install
+        with tempfile.TemporaryDirectory() as root:
+            home = Path(root)
+            responses = [Mock(returncode=0), Mock(returncode=0), Mock(returncode=0), Mock(returncode=113), Mock(returncode=0)]
+            with patch('sidecar.cli.Path.home', return_value=home), patch('sidecar.cli.sys.platform','darwin'), patch('sidecar.cli.subprocess.run', side_effect=responses) as run, patch('sidecar.cli.ensure'), patch('sidecar.cli.time.sleep'):
+                result = install(home / 'data')
+            self.assertTrue(result['installed'])
+            self.assertEqual([call.args[0][1] for call in run.call_args_list], ['bootout','print','print','print','bootstrap'])
+            self.assertTrue((home/'.local/bin/sidecar').exists())
+            self.assertTrue((home/'.codex/skills/sidecar-workers/SKILL.md').exists())
+            self.assertTrue((home/'Library/Application Support/SidecarWorkers/runtime/sidecar/service.py').exists())
+
+
 class ProcessTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
