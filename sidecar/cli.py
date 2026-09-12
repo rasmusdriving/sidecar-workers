@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 import uuid
+from http.client import HTTPException
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -26,7 +27,7 @@ def healthy(data):
         config, host = endpoint(data)
         with urlopen(host + '/' + config['token'] + '/health', timeout=1) as response:
             return json.load(response).get('service') == 'sidecar-workers'
-    except (OSError, ValueError):
+    except (OSError, ValueError, HTTPException):
         return False
 
 

@@ -26,6 +26,11 @@ class LifecycleTests(unittest.TestCase):
                 self.assertEqual(server.server_name, '127.0.0.1')
                 self.assertGreater(server.server_port, 0)
 
+    def test_partial_health_response_during_shutdown_is_not_healthy(self):
+        from http.client import IncompleteRead
+        with patch('sidecar.cli.endpoint', return_value=({'token':'t'},'http://127.0.0.1:1')), patch('sidecar.cli.urlopen', side_effect=IncompleteRead(b'',3)):
+            self.assertFalse(healthy(Path('/unused')))
+
     def test_reopening_cancels_shutdown(self):
         life = Lifecycle(60)
         self.assertFalse(life.should_exit(False, False, 0))

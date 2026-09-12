@@ -149,6 +149,10 @@ def serve(data=None, *, app_probe=app_running, grace=60, check_interval=2):
         signal.signal(signal.SIGINT, lambda *_: stopping.set())
 
     class Handler(BaseHTTPRequestHandler):
+        def setup(self):
+            super().setup()
+            self.connection.settimeout(5)
+
         def log_message(self, *_):
             pass
 
@@ -208,7 +212,9 @@ def serve(data=None, *, app_probe=app_running, grace=60, check_interval=2):
                 self.reply(400, {'error':str(exc)})
 
     server = LoopbackServer(('127.0.0.1', config['port']), Handler)
-    server.daemon_threads = True
+    # Finish in-flight responses before interpreter shutdown. Client timeouts
+    # keep shutdown bounded even if a connection stops sending data.
+    server.daemon_threads = False
     server.timeout = .5
     config.update(port=server.server_port, pid=os.getpid())
     manager = Manager(data, f'http://127.0.0.1:{server.server_port}/' + config['token'])
