@@ -48,11 +48,18 @@ class PlatformTests(unittest.TestCase):
         with patch('sidecar.platform.windows', return_value=True):
             self.assertEqual(host.detached_options(), {'creationflags': 0x01000208})
 
-    def test_restricted_windows_job_does_not_silently_inherit_host_lifetime(self):
-        with patch('sidecar.platform.windows', return_value=True), patch('sidecar.platform.subprocess.Popen', side_effect=PermissionError('Access denied')) as spawn:
-            with self.assertRaisesRegex(RuntimeError, 'host may forbid process breakaway'):
-                host.spawn_detached(['python', '-m', 'sidecar.service'])
-            spawn.assert_called_once()
+    def test_restricted_windows_job_reports_its_lifetime_limit(self):
+        child = Mock()
+        with patch('sidecar.platform.windows', return_value=True), patch('sidecar.platform.subprocess.Popen', side_effect=[PermissionError('Access denied'), child]) as spawn:
+            with self.assertWarnsRegex(RuntimeWarning, 'host blocks process breakaway'):
+                self.assertIs(host.spawn_detached(['python', '-m', 'sidecar.service']), child)
+            self.assertEqual(spawn.call_args_list[0].kwargs['creationflags'], 0x01000208)
+            self.assertEqual(spawn.call_args_list[1].kwargs['creationflags'], 0x208)
+
+    def test_executable_permission_errors_are_not_hidden_by_fallback(self):
+        with patch('sidecar.platform.windows', return_value=True), patch('sidecar.platform.subprocess.Popen', side_effect=PermissionError('Executable denied')):
+            with self.assertRaises(PermissionError):
+                host.spawn_detached(['unreadable.exe'])
 
     def test_windows_lock_contention_and_retry(self):
         crt = types.SimpleNamespace(LK_NBLCK=2, locking=Mock())
@@ -223,8 +230,7 @@ class PortableProcessTests(unittest.TestCase):
                               'time.sleep(60)\n')
             script = (f'import sys,os; import sidecar.worker as w; '
                       f'w.command=lambda *a: ([sys.executable,{str(engine)!r},{str(grandchild)!r},{str(heartbeat)!r}],dict(os.environ)); w.main()')
-            worker = subprocess.Popen([sys.executable, '-c', script, str(job), str(data)],
-                                      cwd=ROOT, **host.detached_options())
+            worker = host.spawn_detached([sys.executable, '-c', script, str(job), str(data)], cwd=ROOT)
             try:
                 deadline = time.monotonic() + 15
                 while not heartbeat.exists() and time.monotonic() < deadline:

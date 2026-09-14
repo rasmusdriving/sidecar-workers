@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+import warnings
 
 
 def windows():
@@ -33,9 +34,17 @@ def spawn_detached(*args, **kwargs):
         return subprocess.Popen(*args, **kwargs, **detached_options())
     except PermissionError as exc:
         if windows():
-            raise RuntimeError('Windows denied independent process startup. The host may forbid '
-                               'process breakaway; start the installed Sidecar scheduled task '
-                               'from Task Scheduler, then retry. Also check executable access.') from exc
+            # Managed hosts (including CI runners) can prohibit leaving their job.
+            # Keep their restriction and detach the console, but disclose that
+            # host-wide job cleanup can still end these processes.
+            options = detached_options()
+            options['creationflags'] &= ~0x01000000
+            process = subprocess.Popen(*args, **kwargs, **options)
+            warnings.warn('Windows host blocks process breakaway. Sidecar is console-detached, '
+                          'but closing or cleaning up the host job may stop its workers. '
+                          'Use the installed scheduled task for app-independent startup.',
+                          RuntimeWarning, stacklevel=2)
+            return process
         raise
 
 

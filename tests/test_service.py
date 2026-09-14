@@ -14,7 +14,7 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 from sidecar.common import ROOT, Lifecycle, atomic, worker_alive
 from sidecar.cli import ensure, healthy, endpoint, request
-from sidecar.platform import detached_options
+from sidecar.platform import detached_options, spawn_detached
 from sidecar.service import Manager, thread_state
 
 
@@ -168,7 +168,7 @@ class ProcessTests(unittest.TestCase):
         self.addCleanup(release.touch)
         engine = 'import sys,time\nfrom pathlib import Path\nwhile not Path(sys.argv[1]).exists(): time.sleep(.05)\nprint(42)'
         code=f'import sys,os; import sidecar.worker as w; w.command=lambda *a: ([sys.executable,"-c",{engine!r},{str(release)!r}],dict(os.environ)); w.main()'
-        worker=subprocess.Popen([sys.executable,'-c',code,str(job),str(self.data)],cwd=ROOT,**detached_options())
+        worker=spawn_detached([sys.executable,'-c',code,str(job),str(self.data)],cwd=ROOT)
         self.procs.append(worker)
         p=self.launch_service()
         time.sleep(.6)
