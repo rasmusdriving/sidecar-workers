@@ -15,6 +15,14 @@ def windows():
     return sys.platform == 'win32'
 
 
+# Coordinating apps Sidecar keeps the shared service available for. Claude's
+# desktop app and its bundled Claude Code CLI both report claude.exe on Windows;
+# either one means a coordinating session can still reach the service.
+WINDOWS_HOSTS = ('codex.exe', 'chatgpt.exe', 'claude.exe')
+MACOS_HOSTS = ('/Codex.app/Contents/MacOS/Codex', '/ChatGPT.app/Contents/MacOS/ChatGPT',
+               '/Claude.app/Contents/MacOS/Claude')
+
+
 def install_home():
     if windows():
         return Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData/Local')) / 'SidecarWorkers'
@@ -99,10 +107,10 @@ def app_running():
         result = subprocess.check_output(['tasklist.exe', '/FO', 'CSV', '/NH'],
                                          text=True, errors='replace', timeout=10,
                                          **hidden_options())
-        return any(row and row[0].lower() in ('codex.exe', 'chatgpt.exe')
+        return any(row and row[0].lower() in WINDOWS_HOSTS
                    for row in csv.reader(result.splitlines()))
     commands = subprocess.check_output(['ps', '-axo', 'comm='], text=True).splitlines()
-    return any(c.strip().endswith(('/ChatGPT.app/Contents/MacOS/ChatGPT', '/Codex.app/Contents/MacOS/Codex')) for c in commands)
+    return any(c.strip().endswith(MACOS_HOSTS) for c in commands)
 
 
 def stop_child(child):

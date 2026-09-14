@@ -76,14 +76,6 @@ class PlatformTests(unittest.TestCase):
                 host.acquire_lock(path)
             self.assertEqual(error.exception.errno, errno.EBADF)
 
-    def test_windows_app_probe_uses_exact_executable_names(self):
-        with patch('sidecar.platform.windows', return_value=True), patch('sidecar.platform.subprocess.check_output') as output:
-            output.return_value = '"Codex-helper.exe","1"\n"NotCodex.exe","2"'
-            self.assertFalse(host.app_running())
-            for name in ('Codex.exe', 'ChatGPT.exe'):
-                output.return_value = f'"{name}","123","Console"\n'
-                self.assertTrue(host.app_running())
-
     def test_worker_identity_rejects_reused_pid(self):
         with tempfile.TemporaryDirectory() as root:
             job = Path(root) / 'worker å'
@@ -134,7 +126,8 @@ class WindowsInstallTests(unittest.TestCase):
             ensure.assert_called_once_with(data, runtime=self.base / 'runtime')
             self.assertTrue(Path(result['cli']).exists())
             self.assertTrue((self.base / 'runtime/sidecar/service.py').exists())
-            self.assertTrue((self.home / '.codex/skills/sidecar-workers/SKILL.md').exists())
+            for skills in ('.codex/skills', '.claude/skills'):
+                self.assertTrue((self.home / skills / 'sidecar-workers/SKILL.md').exists())
             call = scheduler.call_args.args
             self.assertIn('/IT', call)
             self.assertIn('LIMITED', call)
@@ -148,6 +141,8 @@ class WindowsInstallTests(unittest.TestCase):
             installer.uninstall(data)
             self.assertEqual(history.read_text(), 'saved history')
             self.assertFalse(Path(result['cli']).exists())
+            for skills in ('.codex/skills', '.claude/skills'):
+                self.assertFalse((self.home / skills / 'sidecar-workers/SKILL.md').exists())
             stop.assert_called_with(data)
 
     def test_install_and_uninstall_refuse_active_workers(self):

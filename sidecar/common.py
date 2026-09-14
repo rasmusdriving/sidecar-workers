@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import subprocess
 import time
 import uuid
@@ -7,6 +8,18 @@ from pathlib import Path
 from .platform import app_running, install_home, process_command
 
 ROOT = Path(__file__).resolve().parent.parent
+
+# Task identity published by the coordinating app, most specific first.
+TASK_ENV = ('CODEX_THREAD_ID', 'CODEX_SESSION_ID', 'CLAUDE_CODE_SESSION_ID')
+# The coordinating session itself, including its control channel. A worker runs
+# as its own provider session and must never inherit the conversation that
+# launched it; a provider CLI that is also the host would otherwise attach there.
+HOST_ENV = TASK_ENV + ('CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_HOST_SESSION_ID',
+                       'CLAUDE_CODE_CHILD_SESSION', 'CLAUDE_CODE_SESSION_ATTENDED',
+                       'CLAUDE_CODE_MESSAGING_SOCKET', 'CLAUDE_CODE_MESSAGING_TOKEN',
+                       'CLAUDE_PID', 'CLAUDE_EFFORT')
+# Where each coordinating app discovers user skills.
+SKILL_HOMES = ('.codex/skills', '.claude/skills')
 
 
 def data_dir():
@@ -31,7 +44,27 @@ def atomic(path, value):
 
 
 def identity(value=None):
-    return str(uuid.UUID(value or os.environ.get('CODEX_THREAD_ID') or os.environ.get('CODEX_SESSION_ID') or ''))
+    return str(uuid.UUID(value or next((os.environ[name] for name in TASK_ENV if os.environ.get(name)), '')))
+
+
+def host_free_env(env=None):
+    return {k: v for k, v in (os.environ if env is None else env).items() if k not in HOST_ENV}
+
+
+def install_skill(source):
+    """Publish the coordination skill to every supported app, installed or not."""
+    targets = []
+    for home in SKILL_HOMES:
+        target = Path.home() / home / 'sidecar-workers'
+        target.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target / 'SKILL.md')
+        targets.append(str(target))
+    return targets
+
+
+def remove_skill():
+    for home in SKILL_HOMES:
+        (Path.home() / home / 'sidecar-workers' / 'SKILL.md').unlink(missing_ok=True)
 
 
 def thread_dir(data, thread):

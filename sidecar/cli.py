@@ -11,7 +11,7 @@ from http.client import HTTPException
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
-from .common import ROOT, active_workers, atomic, data_dir, identity, thread_dir
+from .common import ROOT, active_workers, atomic, data_dir, identity, install_skill, remove_skill, thread_dir
 
 from .platform import acquire_lock, spawn_detached, link_history, windows
 
@@ -100,15 +100,13 @@ def install(data):
     else:
         raise RuntimeError('Previous LaunchAgent is still unloading; retry installation shortly.')
     subprocess.run(['launchctl','bootstrap',domain,str(plist)], check=True)
-    skill = Path.home() / '.codex/skills/sidecar-workers'
-    skill.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(ROOT / 'skills/sidecar-workers/SKILL.md', skill / 'SKILL.md')
+    skills = install_skill(ROOT / 'skills/sidecar-workers/SKILL.md')
     ensure(data)
-    return {'installed':True,'cli':str(bindir/'sidecar'),'launch_agent':str(plist),'data':str(data)}
+    return {'installed':True,'cli':str(bindir/'sidecar'),'launch_agent':str(plist),'data':str(data),'skills':skills}
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Sidecar Workers: shared local worker service for Codex')
+    parser = argparse.ArgumentParser(description='Sidecar Workers: shared local worker service for Codex and Claude Code')
     sub = parser.add_subparsers(dest='action',required=True)
     start = sub.add_parser('start')
     start.add_argument('--repo',required=True)
@@ -163,7 +161,7 @@ def main():
                     request(data, 'shutdown', {})
                 (Path.home()/'Library/LaunchAgents'/(LABEL+'.plist')).unlink(missing_ok=True)
                 (Path.home()/'.local/bin/sidecar').unlink(missing_ok=True)
-                (Path.home()/'.codex/skills/sidecar-workers/SKILL.md').unlink(missing_ok=True)
+                remove_skill()
             result = {'uninstalled':True,'data_preserved':str(data)}
         elif args.action == 'serve':
             from .service import serve

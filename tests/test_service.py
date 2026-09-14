@@ -14,7 +14,7 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 from sidecar.common import ROOT, Lifecycle, atomic, worker_alive
 from sidecar.cli import ensure, healthy, endpoint, request
-from sidecar.platform import detached_options, spawn_detached
+from sidecar.platform import detached_options, spawn_detached, process_command
 from sidecar.service import Manager, thread_state
 
 
@@ -73,6 +73,26 @@ class ManagerTests(unittest.TestCase):
         for key, value in detached_options().items():
             self.assertEqual(launch.call_args.kwargs[key], value)
 
+    def test_stop_is_requested_without_consulting_the_liveness_probe(self):
+        with patch('sidecar.service.subprocess.Popen', return_value=Mock(pid=123)):
+            job = Path(self.manager.start(self.body)['job_dir'])
+        # The probe shells out to PowerShell on Windows and can transiently
+        # answer "gone" for a live worker. Skipping the request on its word
+        # reports a cancellation that never reached the paid worker.
+        with patch('sidecar.service.worker_alive', return_value=False) as probe:
+            result = self.manager.stop(dict(thread_id=self.tid, worker_id=job.name))
+        self.assertTrue(result['stop_requested'])
+        self.assertTrue((job / 'stop-requested.json').exists())
+        probe.assert_not_called()
+
+    def test_finished_worker_reports_that_nothing_was_stopped(self):
+        with patch('sidecar.service.subprocess.Popen', return_value=Mock(pid=123)):
+            job = Path(self.manager.start(self.body)['job_dir'])
+        atomic(job / 'done.json', {'status': 'complete', 'exit_code': 0})
+        result = self.manager.stop(dict(thread_id=self.tid, worker_id=job.name))
+        self.assertFalse(result['stop_requested'])
+        self.assertFalse((job / 'stop-requested.json').exists())
+
     def test_thread_isolation_and_path_rejection(self):
         with patch('sidecar.service.subprocess.Popen',return_value=Mock(pid=123)):
             result = self.manager.start(self.body)
@@ -120,21 +140,46 @@ class ProcessTests(unittest.TestCase):
         if healthy(self.data):
             cfg,_ = endpoint(self.data)
             request(self.data, 'shutdown', {})
-            deadline = time.monotonic()+3
-            while healthy(self.data) and time.monotonic()<deadline:
+            # Losing HTTP readiness does not mean the process has closed its
+            # log yet. Windows refuses to remove files still held by a process.
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                try:
+                    if 'sidecar.service' not in process_command(cfg['pid']):
+                        break
+                except subprocess.CalledProcessError:
+                    break  # POSIX ps exits nonzero when the process is gone.
                 time.sleep(.02)
+            else:
+                self.fail('test service did not exit after shutdown')
 
     def launch_service(self, grace=.25):
-        flag = self.data/'app-open'
-        code = 'from pathlib import Path; from sidecar.service import serve; import sys; serve(Path(sys.argv[1]),app_probe=lambda: Path(sys.argv[1],"app-open").exists(),grace=float(sys.argv[2]),check_interval=.05)'
+        starting = self.data / 'starting-service'
+        starting.touch()
+        # Keep the simulated app open until readiness is observed. A failed
+        # connection to the previous port can take longer than the idle grace.
+        code = 'from pathlib import Path; from sidecar.service import serve; import sys; serve(Path(sys.argv[1]),app_probe=lambda: any(Path(sys.argv[1],name).exists() for name in ("app-open","starting-service")),grace=float(sys.argv[2]),check_interval=.05)'
         log = self.data / 'test-service.log'
         with log.open('w') as output:
             p = subprocess.Popen([sys.executable,'-c',code,str(self.data),str(grace)],cwd=ROOT, stderr=output)
         self.procs.append(p)
-        deadline=time.monotonic()+3
-        while not healthy(self.data) and time.monotonic()<deadline:
-            time.sleep(.02)
-        self.assertTrue(healthy(self.data), log.read_text())
+        # A cold interpreter start on a loaded Windows runner needs more than a
+        # couple of seconds. Stop early when the child is gone, and say whether
+        # it exited and how long it took: an empty stderr on its own cannot
+        # distinguish a slow start from a service that returned immediately.
+        # Assert on the readiness actually observed. Re-probing here made the
+        # check flaky on Windows when lifecycle probes blocked request handling.
+        # A separate regression test checks responsiveness during those probes.
+        started = time.monotonic()
+        deadline = started + 20
+        ready = False
+        while not ready and time.monotonic() < deadline and p.poll() is None:
+            ready = healthy(self.data)
+            if not ready:
+                time.sleep(.02)
+        starting.unlink()
+        self.assertTrue(ready, 'service exit={} after {:.1f}s, stderr: {}'.format(
+            p.poll(), time.monotonic() - started, log.read_text() or '(empty)'))
         return p
 
     def test_server_shutdown_and_same_url_restart(self):
@@ -147,6 +192,48 @@ class ProcessTests(unittest.TestCase):
         self.assertEqual(first['port'],second['port'])
         self.assertEqual(first['token'],second['token'])
         self.assertNotEqual(first['pid'],second['pid'])
+
+    def test_health_and_stop_respond_while_lifecycle_probe_is_blocked(self):
+        tid = str(uuid.uuid4())
+        worker_id = 'devin-' + uuid.uuid4().hex
+        job = self.data / 'threads' / tid / worker_id
+        job.mkdir(parents=True)
+        atomic(job / 'job.json', {'thread_id': tid})
+        entered = self.data / 'probe-entered'
+        release = self.data / 'release-probe'
+        code = '''
+import sys, time
+from pathlib import Path
+from sidecar.service import serve
+data = Path(sys.argv[1])
+def probe():
+    (data / 'probe-entered').touch()
+    while not (data / 'release-probe').exists():
+        time.sleep(.01)
+    return True
+serve(data, app_probe=probe, check_interval=.05)
+'''
+        process = subprocess.Popen([sys.executable, '-c', code, str(self.data)], cwd=ROOT)
+        self.procs.append(process)
+        self.addCleanup(release.touch)
+        deadline = time.monotonic() + 10
+        while not entered.exists() and time.monotonic() < deadline:
+            healthy(self.data)  # Also triggers the lifecycle check on the old server.
+            time.sleep(.02)
+        self.assertTrue(entered.exists(), 'lifecycle probe never started')
+        self.assertTrue(healthy(self.data), 'health blocked behind lifecycle probe')
+        config, host = endpoint(self.data)
+        body = json.dumps({'thread_id': tid, 'worker_id': worker_id}).encode()
+        with urlopen(Request(host + '/stop', body, {
+            'Authorization': 'Bearer ' + config['token'],
+        }, method='POST'), timeout=1) as response:
+            self.assertTrue(json.load(response)['stop_requested'])
+        self.assertTrue((job / 'stop-requested.json').exists())
+        release.touch()
+        atomic(job / 'done.json', {'status': 'complete'})
+        request(self.data, 'shutdown', {})
+        process.wait(timeout=5)
+        self.assertEqual(process.returncode, 0)
 
     def test_running_app_keeps_service_and_reopen_cancels_exit(self):
         flag=self.data/'app-open';flag.touch()
