@@ -151,10 +151,16 @@ class ProcessTests(unittest.TestCase):
         with log.open('w') as output:
             p = subprocess.Popen([sys.executable,'-c',code,str(self.data),str(grace)],cwd=ROOT, stderr=output)
         self.procs.append(p)
-        deadline=time.monotonic()+3
-        while not healthy(self.data) and time.monotonic()<deadline:
+        # A cold interpreter start on a loaded Windows runner needs more than a
+        # couple of seconds. Stop early when the child is gone, and say whether
+        # it exited and how long it took: an empty stderr on its own cannot
+        # distinguish a slow start from a service that returned immediately.
+        started = time.monotonic()
+        deadline = started + 20
+        while not healthy(self.data) and time.monotonic() < deadline and p.poll() is None:
             time.sleep(.02)
-        self.assertTrue(healthy(self.data), log.read_text())
+        self.assertTrue(healthy(self.data), 'service exit={} after {:.1f}s, stderr: {}'.format(
+            p.poll(), time.monotonic() - started, log.read_text() or '(empty)'))
         return p
 
     def test_server_shutdown_and_same_url_restart(self):
