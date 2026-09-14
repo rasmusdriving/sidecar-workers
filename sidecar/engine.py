@@ -5,6 +5,8 @@ import shutil
 import sys
 from pathlib import Path
 
+from .common import host_free_env
+
 
 def setup():
     root = Path(__file__).resolve().parent.parent / 'vendor/mco'
@@ -30,4 +32,4 @@ def command(config, job, data):
     if config.get('effort'):
         import json
         cmd += ['--provider-models-json', json.dumps({provider: {'effort': config['effort']}})]
-    return cmd, {**os.environ, 'PYTHONUTF8': '1', 'PYTHONIOENCODING': 'utf-8', 'MCO_CONFIG_DIR': str(conf), 'MCO_PERMISSION_DIR': str(job / 'permissions'), 'MCO_QUESTION_DIR': str(job / 'questions'), 'MCO_QUESTION_TIMEOUT': str(config.get('question_timeout', 600)), 'SIDECAR_MAX_TURNS': str(config.get('max_turns', 24)), 'SIDECAR_ALLOW_SUBAGENTS': '1' if config.get('allow_subagents') else '0'}
+    return cmd, {**host_free_env(), 'PYTHONUTF8': '1', 'PYTHONIOENCODING': 'utf-8', 'MCO_CONFIG_DIR': str(conf), 'MCO_PERMISSION_DIR': str(job / 'permissions'), 'MCO_QUESTION_DIR': str(job / 'questions'), 'MCO_QUESTION_TIMEOUT': str(config.get('question_timeout', 600)), 'SIDECAR_MAX_TURNS': str(config.get('max_turns', 24)), 'SIDECAR_ALLOW_SUBAGENTS': '1' if config.get('allow_subagents') else '0'}

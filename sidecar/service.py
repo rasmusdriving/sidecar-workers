@@ -1,4 +1,4 @@
-"""One loopback server for all Codex tasks, with independent worker supervisors."""
+"""One loopback server for all coordinating tasks, with independent worker supervisors."""
 import hmac
 import json
 import os

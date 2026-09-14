@@ -1,4 +1,4 @@
-"""OS-scheduled app checks; no resident watcher while Codex is closed."""
+"""OS-scheduled app checks; no resident watcher while every coordinating app is closed."""
 from .common import active_workers, app_running, data_dir
 from .service import serve
 from .platform import windows

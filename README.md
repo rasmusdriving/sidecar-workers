@@ -1,8 +1,8 @@
 # Sidecar Workers
 
-Local background AI workers with one shared preview service for Codex. Launch Devin, Claude, or Grok from a small CLI and review each task's activity in its own browser page.
+Local background AI workers with one shared preview service. Launch Devin, Claude, or Grok from a small CLI in Codex or Claude Code, and review each task's activity in its own browser page.
 
-Sidecar keeps worker execution separate from the Codex app and preview server. Restarting the app or HTTP service does not interrupt detached workers. Results are saved on disk.
+Sidecar keeps worker execution separate from the coordinating app and preview server. Restarting the app or HTTP service does not interrupt detached workers. Results are saved on disk.
 
 ## Install on macOS
 
@@ -14,7 +14,7 @@ cd sidecar-workers
 python3 -m sidecar install
 ```
 
-Add `~/.local/bin` to PATH if needed. Installation creates the `sidecar` command, a Codex skill, and a macOS LaunchAgent. For another data location, use `python3 -m sidecar install --data-dir /path/to/sidecar-data`. No root access is required. Installation copies a small runtime into `~/Library/Application Support/SidecarWorkers/runtime` and keeps launch logs in `~/Library/Logs/SidecarWorkers`, so launchd does not need to create its own logs on a removable volume. Run the install command again after updating the checkout.
+Add `~/.local/bin` to PATH if needed. Installation creates the `sidecar` command, a skill for Codex (`~/.codex/skills`) and Claude Code (`~/.claude/skills`), and a macOS LaunchAgent. For another data location, use `python3 -m sidecar install --data-dir /path/to/sidecar-data`. No root access is required. Installation copies a small runtime into `~/Library/Application Support/SidecarWorkers/runtime` and keeps launch logs in `~/Library/Logs/SidecarWorkers`, so launchd does not need to create its own logs on a removable volume. Run the install command again after updating the checkout.
 
 Devin is discovered in `/Applications/Devin - Next.app` or `/Applications/Devin.app`. Set `SIDECAR_DEVIN_BIN` before installation for a different location. Claude and Grok use their existing signed-in CLIs on PATH. No credentials are copied into Sidecar.
 
@@ -38,9 +38,9 @@ $env:Path += ";$env:LOCALAPPDATA\SidecarWorkers\bin"
 sidecar doctor
 ```
 
-Installation copies the runtime to `%LOCALAPPDATA%\SidecarWorkers\runtime`, installs the Codex skill, and creates a per-user `SidecarWorkers-...` scheduled task. The task checks for Codex or ChatGPT every minute while you are signed in. It starts a detached service and exits; CLI commands also start the service immediately. The task uses your current account with limited privileges and stores no password. If your organization blocks Task Scheduler registration, the installer reports the error; you can still run `py -3 -m sidecar` from the checkout.
+Installation copies the runtime to `%LOCALAPPDATA%\SidecarWorkers\runtime`, installs the skill for Codex (`%USERPROFILE%\.codex\skills`) and Claude Code (`%USERPROFILE%\.claude\skills`), and creates a per-user `SidecarWorkers-...` scheduled task. The task checks for Codex, ChatGPT, or Claude every minute while you are signed in. It starts a detached service and exits; CLI commands also start the service immediately. The task uses your current account with limited privileges and stores no password. If your organization blocks Task Scheduler registration, the installer reports the error; you can still run `py -3 -m sidecar` from the checkout.
 
-Windows launches request process breakaway so the service and workers can outlive the host app. If a managed host blocks breakaway, Sidecar falls back to console detachment and prints a warning: host-wide process cleanup can still stop those workers. For app-independent startup, run the installed `SidecarWorkers-...` task from Task Scheduler while Codex is open before launching work. Windows process job restrictions are described in [Microsoft's job object documentation](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects).
+Windows launches request process breakaway so the service and workers can outlive the host app. If a managed host blocks breakaway, Sidecar falls back to console detachment and prints a warning: host-wide process cleanup can still stop those workers. For app-independent startup, run the installed `SidecarWorkers-...` task from Task Scheduler while the coordinating app is open before launching work. Windows process job restrictions are described in [Microsoft's job object documentation](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects).
 
 To keep histories on another drive, install with `py -3 -m sidecar install --data-dir "D:\Sidecar Data"`. The runtime remains in Local App Data so the scheduled check can start reliably. That data drive must be available when Sidecar runs. Rerun installation after updating the checkout or changing provider PATH entries. Finish or stop workers before reinstalling.
 
@@ -54,7 +54,17 @@ sidecar status WORKER_ID
 sidecar stop WORKER_ID
 ```
 
-Outside Codex, add `--thread-id` with a UUID to task commands. Windows history imports use directory junctions, so Developer Mode and symlink privileges are not required. Use local history folders; junctions cannot target network shares.
+Outside a recognized app session, add `--thread-id` with a UUID to task commands. Windows history imports use directory junctions, so Developer Mode and symlink privileges are not required. Use local history folders; junctions cannot target network shares.
+
+## Coordinating apps
+
+One installation serves Codex and Claude Code, on macOS and Windows. Installation writes the skill to both `~/.codex/skills/sidecar-workers` and `~/.claude/skills/sidecar-workers`, whether or not both apps are present, so the agent discovers `sidecar` wherever you work. In Claude Code this covers the desktop app, its terminal sessions, and the CLI, since they share the same user skill directory.
+
+Each task is scoped by the session identifier its app publishes: `CODEX_THREAD_ID`, then `CODEX_SESSION_ID`, then `CLAUDE_CODE_SESSION_ID`. Anything else, including a plain shell, needs `--thread-id UUID`. Histories from different apps are separate task folders under the same data directory and the same service.
+
+Presence detection covers the Codex, ChatGPT, and Claude desktop apps: `Codex.app`, `ChatGPT.app`, and `Claude.app` on macOS, `codex.exe`, `chatgpt.exe`, and `claude.exe` on Windows. The service stays available while any of them is open.
+
+Workers never inherit the coordinating session. Sidecar removes the app's session and messaging variables from the worker environment, so a `claude` worker launched from Claude Code starts its own provider conversation instead of attaching to yours. Provider credentials, `ANTHROPIC_*` settings, and `PATH` are untouched.
 
 ## Use
 
@@ -67,7 +77,7 @@ sidecar preview
 sidecar doctor
 ```
 
-Codex task identity comes from `CODEX_THREAD_ID` or `CODEX_SESSION_ID`. Outside Codex, pass `--thread-id UUID`. Use `--mode write` for authorized edits, `--file prompt.txt` for a longer prompt, and `--timeout SECONDS` to bound a worker. The CLI prints JSON and returns immediately after dispatch. Open the returned `preview_url` in the Codex browser. Workers within a task share the same page; all pages share one server.
+Task identity comes from `CODEX_THREAD_ID`, `CODEX_SESSION_ID`, or `CLAUDE_CODE_SESSION_ID`, in that order. Without one, pass `--thread-id UUID`. Use `--mode write` for authorized edits, `--file prompt.txt` for a longer prompt, and `--timeout SECONDS` to bound a worker. The CLI prints JSON and returns immediately after dispatch. Open the returned `preview_url` in the coordinating app's browser view. Workers within a task share the same page; all pages share one server.
 
 The CLI checks the local service automatically. Warm launches need no manual server setup. Cold starts use a singleton lock, including when several tasks connect at once. Reuse `--request-id UUID` for an uncertain retry to avoid dispatching the same job twice.
 
@@ -93,7 +103,7 @@ Inspect the exact action before approving it. The permission queue is currently 
 
 ## Worker questions
 
-A worker can ask its coordinating agent for missing context. Status becomes `needs_input` and includes a question ID and text. Reply from the same Codex task:
+A worker can ask its coordinating agent for missing context. Status becomes `needs_input` and includes a question ID and text. Reply from the same task:
 
 ```sh
 sidecar reply WORKER_ID QUESTION_ID --answer "Use the existing customer timezone."
@@ -101,7 +111,7 @@ sidecar reply WORKER_ID QUESTION_ID --answer "Use the existing customer timezone
 
 Use `--file answer.txt` for a longer reply, or `--thread-id UUID` outside the original task. Answers are persisted before being delivered, and identical retries are safe. The preview displays questions and answers; mutations stay in the authenticated CLI.
 
-Claude and Grok resume the exact native conversation ID. Devin continues the same open ACP session. Provider permission modes remain unchanged. This is a question/reply channel, not arbitrary messages into a running tool call. The orchestrating agent must check status; Sidecar cannot wake an idle Codex task.
+Claude and Grok resume the exact native conversation ID. Devin continues the same open ACP session. Provider permission modes remain unchanged. This is a question/reply channel, not arbitrary messages into a running tool call. The orchestrating agent must check status; Sidecar cannot wake an idle coordinating task.
 
 Execution time pauses during clarification. `--question-timeout` defaults to 600 seconds per question, with up to five questions. Service restarts preserve pending questions and workers; machine restarts do not resume paid work automatically. Replies after expiry or stop are rejected.
 
@@ -109,12 +119,12 @@ Nested agents are disabled by default. Claude/Grok enforce this through their pr
 
 ## Process lifetime
 
-- macOS launchd checks for the Codex app every 15 seconds; Windows Task Scheduler checks every minute while you are signed in. When the app is closed and no workers are active, the check exits immediately instead of leaving a resident watcher.
-- One service remains available while Codex is open. Browser inactivity does not expire a task's URL. Hidden tabs pause polling.
-- Closing Codex starts a 60-second grace period only when no workers are active.
-- Reopening Codex or finding active workers cancels pending shutdown. Conditions are checked again immediately before exit.
+- macOS launchd checks for a coordinating app every 15 seconds; Windows Task Scheduler checks every minute while you are signed in. Codex, ChatGPT, and Claude all count. When every one of them is closed and no workers are active, the check exits immediately instead of leaving a resident watcher.
+- One service remains available while any coordinating app is open. Browser inactivity does not expire a task's URL. Hidden tabs pause polling.
+- Closing the last coordinating app starts a 60-second grace period only when no workers are active.
+- Reopening one of them or finding active workers cancels pending shutdown. Conditions are checked again immediately before exit.
 - Worker supervisors run independently. App and service restarts do not kill them. A restarted service discovers their saved status and process identities.
-- Once Codex stays closed, workers have finished, and the grace period expires, the service exits. The next app opening or CLI call starts it again at the saved port and URL.
+- Once they all stay closed, workers have finished, and the grace period expires, the service exits. The next app opening or CLI call starts it again at the saved port and URL.
 
 A machine restart cannot preserve running processes. Afterward, unfinished jobs without a matching live supervisor are marked failed and their files remain. There is no automatic replay of paid work. If the saved port is occupied by another application, Sidecar reports startup failure rather than silently moving old URLs. Data on an external volume requires that volume to be mounted.
 
@@ -128,7 +138,7 @@ Worker logs accumulate on disk, not in a permanent in-memory history. No logs ar
 python3 -m unittest discover -v
 ```
 
-Tests cover singleton startup, request replay, task isolation, HTTP access checks, the app-close/reopen grace period, service restart, and a detached worker surviving restart. Lifecycle tests simulate app presence; they do not close your actual Codex app. Provider integration also needs an authenticated live smoke test.
+Tests cover singleton startup, request replay, task isolation, HTTP access checks, the app-close/reopen grace period, service restart, and a detached worker surviving restart. Lifecycle tests simulate app presence; they do not close your actual coordinating app. Provider integration also needs an authenticated live smoke test.
 
 CI runs the suite on macOS and Windows with Python 3.10 and 3.12. Platform tests cover installation, file locks, Unicode paths, worker cancellation and descendant cleanup. The Windows launcher and junction test runs only on Windows; Task Scheduler registration is mocked in automated tests. Check a real installation with `sidecar doctor`, a provider worker, stop, and restart before relying on it for paid work.
 
@@ -138,8 +148,8 @@ Sidecar wraps a vendored, MIT-licensed MCO execution engine with local provider 
 
 ## Uninstall
 
-Run `sidecar uninstall` to remove the macOS LaunchAgent or Windows scheduled task, shut down the service, and remove the installed command and Codex skill. It refuses while workers are active. Saved histories and the source checkout are retained. On Windows, remove the Sidecar bin entry from your user PATH if you added it.
+Run `sidecar uninstall` to remove the macOS LaunchAgent or Windows scheduled task, shut down the service, and remove the installed command and both installed skill copies. It refuses while workers are active. Saved histories and the source checkout are retained. On Windows, remove the Sidecar bin entry from your user PATH if you added it.
 
 ## Status
 
-Early release focused on Codex, with native macOS and Windows support. Windows live provider execution and Task Scheduler registration still need validation on a Windows machine. This is an independent project, not an official OpenAI, Anthropic, xAI, or Cognition product.
+Early release for Codex and Claude Code, with native macOS and Windows support. Windows live provider execution, Task Scheduler registration, and the `claude.exe` presence check still need validation on a Windows machine. Until then, an unrecognized Claude process name on Windows only affects how long the idle service stays up; the CLI and workers are unaffected. This is an independent project, not an official OpenAI, Anthropic, xAI, or Cognition product.

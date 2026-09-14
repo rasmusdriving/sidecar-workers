@@ -9,7 +9,7 @@ import subprocess
 import sys
 import time
 
-from .common import ROOT, active_workers
+from .common import ROOT, active_workers, install_skill, remove_skill
 from .platform import install_home, hidden_options
 
 
@@ -92,12 +92,10 @@ def install(data):
                  '/TR', subprocess.list2cmdline([background_python, '-X', 'utf8', str(bootstrap), '--supervise']),
                  '/IT', '/RL', 'LIMITED', '/F')
     settings.write_text(json.dumps({'data': str(data), 'task': task}), encoding='utf-8')
-    skill = Path.home() / '.codex/skills/sidecar-workers'
-    skill.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(runtime / 'skills/sidecar-workers/SKILL.md', skill / 'SKILL.md')
+    skills = install_skill(runtime / 'skills/sidecar-workers/SKILL.md')
     ensure(data, runtime=runtime)
     return {'installed': True, 'cli': str(launcher), 'scheduled_task': task,
-            'data': str(data), 'add_to_path': str(bindir)}
+            'data': str(data), 'add_to_path': str(bindir), 'skills': skills}
 
 
 def uninstall(data):
@@ -117,4 +115,4 @@ def uninstall(data):
     (base / 'bin/sidecar.cmd').unlink(missing_ok=True)
     (base / 'launcher.py').unlink(missing_ok=True)
     settings.unlink(missing_ok=True)
-    (Path.home() / '.codex/skills/sidecar-workers/SKILL.md').unlink(missing_ok=True)
+    remove_skill()
