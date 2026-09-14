@@ -50,7 +50,7 @@ sidecar permission WORKER_ID REQUEST_ID allow_once
 
 Use `deny` if it is outside scope, or obtain required authorization. Never approve a queue blindly. Requests expire after five minutes within the overall worker timeout. This coordinating permission queue currently supports Devin only; inspect Claude/Grok blocked results and resolve authorized follow-up work in the parent. Compare each provider's reported model with the requested model.
 
-`sidecar stop WORKER_ID` cancels only that task's named worker. Reuse an explicit `--request-id UUID` when retrying an uncertain start to avoid duplicate jobs. New starts do not resume previous provider conversations; provide relevant prior context in follow-up jobs. Replies to a pending clarification continue the existing conversation.
+`sidecar stop WORKER_ID` cancels only that task's named worker and reports `stop_requested: false` when that worker had already finished. Retrying a stop is safe. Reuse an explicit `--request-id UUID` when retrying an uncertain start to avoid duplicate jobs. New starts do not resume previous provider conversations; provide relevant prior context in follow-up jobs. Replies to a pending clarification continue the existing conversation.
 
 If the CLI is missing, report that Sidecar needs installation from the project README. For an installed service problem, use `sidecar doctor`; do not recreate the old per-task preview scripts.
 

@@ -73,6 +73,26 @@ class ManagerTests(unittest.TestCase):
         for key, value in detached_options().items():
             self.assertEqual(launch.call_args.kwargs[key], value)
 
+    def test_stop_is_requested_without_consulting_the_liveness_probe(self):
+        with patch('sidecar.service.subprocess.Popen', return_value=Mock(pid=123)):
+            job = Path(self.manager.start(self.body)['job_dir'])
+        # The probe shells out to PowerShell on Windows and can transiently
+        # answer "gone" for a live worker. Skipping the request on its word
+        # reports a cancellation that never reached the paid worker.
+        with patch('sidecar.service.worker_alive', return_value=False) as probe:
+            result = self.manager.stop(dict(thread_id=self.tid, worker_id=job.name))
+        self.assertTrue(result['stop_requested'])
+        self.assertTrue((job / 'stop-requested.json').exists())
+        probe.assert_not_called()
+
+    def test_finished_worker_reports_that_nothing_was_stopped(self):
+        with patch('sidecar.service.subprocess.Popen', return_value=Mock(pid=123)):
+            job = Path(self.manager.start(self.body)['job_dir'])
+        atomic(job / 'done.json', {'status': 'complete', 'exit_code': 0})
+        result = self.manager.stop(dict(thread_id=self.tid, worker_id=job.name))
+        self.assertFalse(result['stop_requested'])
+        self.assertFalse((job / 'stop-requested.json').exists())
+
     def test_thread_isolation_and_path_rejection(self):
         with patch('sidecar.service.subprocess.Popen',return_value=Mock(pid=123)):
             result = self.manager.start(self.body)

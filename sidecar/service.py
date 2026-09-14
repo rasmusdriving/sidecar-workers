@@ -157,9 +157,14 @@ class Manager:
 
     def stop(self, body):
         job = self.job(identity(body['thread_id']), body['worker_id'])
-        if not (job / 'done.json').exists() and worker_alive(job):
+        # Never gate the request on a liveness probe: it shells out to
+        # PowerShell on Windows and a transient empty answer would silently
+        # leave a paid worker running while reporting a cancellation. The file
+        # is inert once a supervisor has exited, so requesting is always safe.
+        requested = not (job / 'done.json').exists()
+        if requested:
             atomic(job / 'stop-requested.json', {'created':time.time()})
-        return {'worker_id': job.name, 'stop_requested': True}
+        return {'worker_id': job.name, 'stop_requested': requested}
 
 
 def serve(data=None, *, app_probe=app_running, grace=60, check_interval=2):
