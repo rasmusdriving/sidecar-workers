@@ -1,11 +1,11 @@
 """Use the existing MCO execution engine without requiring its global install."""
 import os
 import shlex
-import shutil
 import sys
 from pathlib import Path
 
 from .common import host_free_env
+from .providers import resolve_binary
 
 
 def setup():
@@ -19,9 +19,8 @@ def command(config, job, data):
     engine = setup()
     conf = data / 'engine-config'
     conf.mkdir(exist_ok=True)
-    candidates = [os.environ.get('SIDECAR_DEVIN_BIN', ''), shutil.which('devin'), '/Applications/Devin - Next.app/Contents/Resources/app/extensions/windsurf/devin/bin/devin', '/Applications/Devin.app/Contents/Resources/app/extensions/windsurf/devin/bin/devin']
-    binary = next((p for p in candidates if p and Path(p).is_file()), None)
     if config['provider'] == 'devin':
+        binary = resolve_binary('devin')
         if not binary:
             raise ValueError('Devin CLI not found. Set SIDECAR_DEVIN_BIN to the installed Devin executable.')
         import json

@@ -137,7 +137,13 @@ def main():
         if action.prog.endswith('permission'):
             action.add_argument('request_id')
             action.add_argument('decision',choices=['allow_once','deny'])
-    sub.add_parser('doctor')
+    doctor = sub.add_parser('doctor')
+    doctor.add_argument('--skip-auth', action='store_true', help='Only check executable discovery')
+    auth = sub.add_parser('auth')
+    auth.add_argument('operation', choices=['status', 'login'])
+    auth.add_argument('provider', choices=['devin', 'claude', 'grok'])
+    auth.add_argument('--foreground', action='store_true', help='Sign in using this interactive terminal')
+    start.add_argument('--no-login', action='store_true', help='Report missing sign-in without opening a terminal')
     sub.add_parser('uninstall')
     setup = sub.add_parser('install')
     setup.add_argument('--data-dir')
@@ -170,7 +176,15 @@ def main():
         elif args.action == 'doctor':
             ensure(data)
             cfg, host = endpoint(data)
-            result = {'healthy':True,'pid':cfg['pid'],'host':host,'data':str(data),'providers':{p:shutil.which(p) for p in ['claude','grok']}}
+            result = {'healthy':True,'pid':cfg['pid'],'host':host,'data':str(data),
+                      'providers':request(data, 'provider-status', {'check_auth': not args.skip_auth})}
+        elif args.action == 'auth':
+            result = request(data, 'provider-status', {'provider': args.provider})
+            if args.operation == 'login' and result['binary'] and result['status'] != 'ready':
+                from .auth import open_login, run_login
+                if args.foreground:
+                    raise SystemExit(run_login(data, args.provider, result['binary']))
+                result['login'] = open_login(data, args.provider, result['binary'])
         elif args.action == 'import-history':
             source = Path(args.directory).resolve(strict=True)
             tid = identity(source.name)
@@ -189,7 +203,16 @@ def main():
             if args.action == 'start':
                 body = vars(args).copy()
                 body.update(thread_id=tid, prompt=Path(args.file).read_text(encoding='utf-8') if args.file else args.prompt, request_id=args.request_id or str(uuid.uuid4()))
-                result = request(data,'start',body)
+                # Check from the service's environment, exactly where workers
+                # resolve their CLI. No worker or prompt log exists before login.
+                result = request(data, 'provider-status', {'provider': args.provider})
+                if result['status'] == 'ready':
+                    result = request(data,'start',body)
+                else:
+                    result.update(thread_id=tid, request_id=body['request_id'], worker_started=False)
+                    if result['status'] == 'needs_auth' and not args.no_login:
+                        from .auth import open_login
+                        result['login'] = open_login(data, args.provider, result['binary'])
             elif args.action == 'reply':
                 result = request(data,'reply',{**vars(args),'thread_id':tid,'answer':Path(args.file).read_text(encoding='utf-8') if args.file else args.answer})
             elif args.action in ('permission','stop'):

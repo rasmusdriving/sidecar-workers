@@ -23,6 +23,16 @@ Devin is the default provider: SWE-2 High for most work, Max for important work 
 
 Write workers use native Devin Smart / Claude auto / Grok auto. Inspection uses Ask / plan / plan. These are provider permission modes, not OS sandboxes. Preserve user scope and do not enable bypass modes to get around a failure.
 
+### First-use sign-in
+
+`sidecar start` checks the selected provider's CLI and sign-in from the service environment before creating a worker. If it returns `status: needs_auth` and `worker_started: false`, it opens that provider's native login in a visible terminal. Tell the user to complete the provider's browser or terminal sign-in. Do not ask for passwords, tokens, or credential files in chat, and do not send the task prompt to a login command.
+
+Check `sidecar auth status PROVIDER` while waiting. Once it reports `ready`, retry the original `sidecar start` with the same task, options, and returned `request_id` passed as `--request-id`. The login does not itself launch a worker. Repeated attempts reuse an active login instead of opening more windows. If the user cancels, pause the launch rather than repeatedly reopening login.
+
+If opening the terminal fails, show the returned `manual_command` for the user to run in their own terminal. `sidecar auth login PROVIDER` retries the visible login; `--foreground` runs it in the caller's interactive terminal. For a headless session, use `sidecar start --no-login` and guide the user through that manual command on the host machine. Never declare success until a fresh auth status confirms it.
+
+`sidecar doctor` reports `binary`, `status`, and `authenticated` for Devin, Claude, and Grok. `not_installed` means discovery failed; `check_failed` means the check was inconclusive (for example, a network error), not that the user must sign in. Diagnose that failure rather than opening login automatically. Windows Devin discovery includes the per-user and Program Files app bundles; `SIDECAR_DEVIN_BIN` remains the explicit override.
+
 ### Connected tools in Devin
 
 Devin loads its own configured MCP servers and authentication. The coordinating app's own plugin and MCP connections are not forwarded by Sidecar. Diagnose with the installed Devin CLI's `mcp list` and `mcp login <server-name>` commands, then verify a fresh Sidecar worker with a minimal read-only call. Never copy credentials into prompts or worker logs.
@@ -31,7 +41,7 @@ In the tested Devin ACP version, Ask mode (`--mode read_only`) omits shell execu
 
 Devin skills are separate from MCP connections. Use `devin skills paths` and `devin skills list` to check discovery; install only the relevant skill directories, including their referenced files, into a supported location. Recheck after plugin upgrades and start a fresh worker after authentication or skill changes.
 
-The result contains `worker_id`, `thread_id`, `job_dir`, and `preview_url`. Open the URL once in the coordinating app's own browser view: `open_in_codex` in Codex, the browser or preview pane in Claude Code. Reuse that tab; do not create another one for each worker. If using computer-use tools, mark the preview as a deliverable. Each task has a separate URL on the same service.
+After a successful launch, the result contains `worker_id`, `thread_id`, `job_dir`, and `preview_url`. Open the URL once in the coordinating app's own browser view: `open_in_codex` in Codex, the browser or preview pane in Claude Code. From a terminal-only host, use the operating system's default browser. Reuse that tab; do not create another one for each worker. If using computer-use tools, mark the preview as a deliverable. Each task has a separate URL on the same service.
 
 ## Follow through
 
