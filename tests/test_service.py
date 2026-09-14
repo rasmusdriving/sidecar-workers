@@ -155,11 +155,18 @@ class ProcessTests(unittest.TestCase):
         # couple of seconds. Stop early when the child is gone, and say whether
         # it exited and how long it took: an empty stderr on its own cannot
         # distinguish a slow start from a service that returned immediately.
+        # Assert on the readiness actually observed. Re-probing here made the
+        # check flaky on Windows: serve() spawns tasklist.exe and a PowerShell
+        # query per active worker inline with handle_request(), so a healthy
+        # service can miss the next one-second health probe while it blocks.
         started = time.monotonic()
         deadline = started + 20
-        while not healthy(self.data) and time.monotonic() < deadline and p.poll() is None:
-            time.sleep(.02)
-        self.assertTrue(healthy(self.data), 'service exit={} after {:.1f}s, stderr: {}'.format(
+        ready = False
+        while not ready and time.monotonic() < deadline and p.poll() is None:
+            ready = healthy(self.data)
+            if not ready:
+                time.sleep(.02)
+        self.assertTrue(ready, 'service exit={} after {:.1f}s, stderr: {}'.format(
             p.poll(), time.monotonic() - started, log.read_text() or '(empty)'))
         return p
 
