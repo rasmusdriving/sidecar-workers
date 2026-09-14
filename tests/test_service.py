@@ -14,7 +14,7 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 from sidecar.common import ROOT, Lifecycle, atomic, worker_alive
 from sidecar.cli import ensure, healthy, endpoint, request
-from sidecar.platform import detached_options, spawn_detached
+from sidecar.platform import detached_options, spawn_detached, process_command
 from sidecar.service import Manager, thread_state
 
 
@@ -140,13 +140,25 @@ class ProcessTests(unittest.TestCase):
         if healthy(self.data):
             cfg,_ = endpoint(self.data)
             request(self.data, 'shutdown', {})
-            deadline = time.monotonic()+3
-            while healthy(self.data) and time.monotonic()<deadline:
+            # Losing HTTP readiness does not mean the process has closed its
+            # log yet. Windows refuses to remove files still held by a process.
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                try:
+                    if 'sidecar.service' not in process_command(cfg['pid']):
+                        break
+                except subprocess.CalledProcessError:
+                    break  # POSIX ps exits nonzero when the process is gone.
                 time.sleep(.02)
+            else:
+                self.fail('test service did not exit after shutdown')
 
     def launch_service(self, grace=.25):
-        flag = self.data/'app-open'
-        code = 'from pathlib import Path; from sidecar.service import serve; import sys; serve(Path(sys.argv[1]),app_probe=lambda: Path(sys.argv[1],"app-open").exists(),grace=float(sys.argv[2]),check_interval=.05)'
+        starting = self.data / 'starting-service'
+        starting.touch()
+        # Keep the simulated app open until readiness is observed. A failed
+        # connection to the previous port can take longer than the idle grace.
+        code = 'from pathlib import Path; from sidecar.service import serve; import sys; serve(Path(sys.argv[1]),app_probe=lambda: any(Path(sys.argv[1],name).exists() for name in ("app-open","starting-service")),grace=float(sys.argv[2]),check_interval=.05)'
         log = self.data / 'test-service.log'
         with log.open('w') as output:
             p = subprocess.Popen([sys.executable,'-c',code,str(self.data),str(grace)],cwd=ROOT, stderr=output)
@@ -165,6 +177,7 @@ class ProcessTests(unittest.TestCase):
             ready = healthy(self.data)
             if not ready:
                 time.sleep(.02)
+        starting.unlink()
         self.assertTrue(ready, 'service exit={} after {:.1f}s, stderr: {}'.format(
             p.poll(), time.monotonic() - started, log.read_text() or '(empty)'))
         return p
