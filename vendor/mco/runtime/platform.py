@@ -18,6 +18,7 @@ from typing import Dict, List, Mapping, Optional, Tuple, Union
 
 _WINDOWS_CMD_META = re.compile(r'([()\[\]%!^"`<>&|;,*? ])')
 _WINDOWS_NEW_PROCESS_GROUP = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+_WINDOWS_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
 
 
 def user_suffix() -> str:
@@ -80,7 +81,11 @@ def prepare_spawn(
     if os.name != "nt":
         return resolved, {"start_new_session": True}
 
-    options: Dict[str, object] = {"creationflags": _WINDOWS_NEW_PROCESS_GROUP}
+    # Provider workers use NO_WINDOW, not DETACHED_PROCESS: those flags are
+    # mutually exclusive. Keep the process group for existing cancellation.
+    # Sidecar's detached supervisor/breakaway policy is a separate spawn layer;
+    # interactive login explicitly removes these flags in sidecar.auth.
+    options: Dict[str, object] = {"creationflags": _WINDOWS_NEW_PROCESS_GROUP | _WINDOWS_NO_WINDOW}
     if not resolved or not resolved[0].lower().endswith((".cmd", ".bat")):
         return resolved, options
 
@@ -104,7 +109,8 @@ def _taskkill(process, force: bool) -> None:
     command = ["taskkill", "/pid", str(process.pid), "/t"]
     if force:
         command.append("/f")
-    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    result = subprocess.run(command, capture_output=True, text=True, check=False,
+                            creationflags=_WINDOWS_NO_WINDOW)
     if result.returncode != 0 and process.poll() is None:
         raise OSError(result.stderr.strip() or result.stdout.strip() or "taskkill failed")
 

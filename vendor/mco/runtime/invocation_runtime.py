@@ -173,6 +173,7 @@ def _run_one_invocation(
     hard_timeout_seconds: int,
     provider_permissions: Mapping[str, Mapping[str, str]],
     provider_context: Mapping[str, Mapping[str, object]],
+    provider_models: Optional[Mapping[str, Mapping[str, object]]] = None,
     allow_paths: Sequence[str],
     cancel_event: threading.Event,
     cancel_state: Mapping[str, str],
@@ -218,6 +219,8 @@ def _run_one_invocation(
             "context_paths": list(context_paths),
         },
     )
+    # Carry validated model settings into the real invocation, not only dry runs.
+    task.metadata.update((provider_models or {}).get(invocation.provider, {}))
     if context_manifest:
         task.metadata["context_manifest"] = context_manifest
     if invocation.model != "default":
@@ -458,6 +461,7 @@ def run_invocations(
     context_paths: Sequence[str] = (),
     context_manifest: Optional[str] = None,
     provider_context: Optional[Mapping[str, Mapping[str, object]]] = None,
+    provider_models: Optional[Mapping[str, Mapping[str, object]]] = None,
     provider_timeouts: Optional[Mapping[str, int]] = None,
     max_provider_parallelism: int = 0,
     poll_interval_seconds: float = 0.05,
@@ -524,6 +528,7 @@ def run_invocations(
                     ),
                     provider_permissions=provider_permissions,
                     provider_context=provider_context or {},
+                    provider_models=provider_models or {},
                     allow_paths=allow_paths,
                     cancel_event=stop_event,
                     cancel_state=stop_state,
@@ -727,6 +732,7 @@ def run_invocation_workflow(
     synthesize: bool = False,
     synthesis_provider: Optional[str] = None,
     provider_context: Optional[Mapping[str, Mapping[str, object]]] = None,
+    provider_models: Optional[Mapping[str, Mapping[str, object]]] = None,
     provider_timeouts: Optional[Mapping[str, int]] = None,
     max_provider_parallelism: int = 0,
     poll_interval_seconds: float = 0.05,
@@ -750,6 +756,7 @@ def run_invocation_workflow(
             cancel_event=cancel_event,
             event_callback=event_callback,
             provider_context=provider_context,
+            provider_models=provider_models,
             provider_timeouts=provider_timeouts,
             max_provider_parallelism=max_provider_parallelism,
             poll_interval_seconds=poll_interval_seconds,
@@ -879,6 +886,7 @@ def run_invocation_workflow(
             context_paths=context_paths,
             context_manifest=str(manifest_path) if manifest_path is not None else None,
             provider_context=provider_context,
+            provider_models=provider_models,
             provider_timeouts=provider_timeouts,
             max_provider_parallelism=max_provider_parallelism,
             poll_interval_seconds=poll_interval_seconds,

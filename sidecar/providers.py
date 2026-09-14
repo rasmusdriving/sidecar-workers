@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from .common import host_free_env
 from .platform import hidden_options, windows
 
-PROVIDERS = ('devin', 'claude', 'grok')
+PROVIDERS = ('devin', 'claude', 'grok', 'codex')
 
 
 def resolve_binary(provider):
@@ -40,6 +40,8 @@ def resolve_binary(provider):
 def login_command(provider, binary):
     if provider not in PROVIDERS:
         raise ValueError('Unknown provider')
+    if provider == 'codex':
+        return [binary, 'login']
     return [binary, 'login', '--oauth'] if provider == 'grok' else [binary, 'auth', 'login']
 
 
@@ -64,10 +66,14 @@ def provider_status(provider, check_auth=True, *, binary=None):
     result.update(status='unchecked', login_command='sidecar auth login ' + provider)
     if not check_auth:
         return result
-    probe = [binary, 'models'] if provider == 'grok' else [binary, 'auth', 'status']
+    probe = ([binary, 'models'] if provider == 'grok' else [binary, 'login', 'status']
+             if provider == 'codex' else [binary, 'auth', 'status'])
     cmd, options = prepare_command(probe)
+    hidden = hidden_options()
+    if 'creationflags' in hidden:
+        options['creationflags'] = options.get('creationflags', 0) | hidden['creationflags']
     try:
-        completed = subprocess.run(cmd, **{**options, **hidden_options()}, stdin=subprocess.DEVNULL,
+        completed = subprocess.run(cmd, **options, stdin=subprocess.DEVNULL,
                                    capture_output=True, encoding='utf-8', errors='replace', timeout=8)
     except (OSError, subprocess.SubprocessError):
         return {**result, 'status': 'check_failed', 'message': 'Could not check sign-in. Check the provider CLI or connection and retry.'}
@@ -86,7 +92,7 @@ def provider_status(provider, check_auth=True, *, binary=None):
                                            'unauthorized', 'invalid api key', 'expired token')):
         logged_in = False
     elif logged_in is None and completed.returncode == 0:
-        if provider == 'grok' or (provider == 'devin' and ('logged in' in output or 'authenticated' in output)):
+        if provider == 'grok' or (provider in ('devin', 'codex') and ('logged in' in output or 'authenticated' in output)):
             logged_in = True
     if logged_in is False:
         return {**result, 'status': 'needs_auth', 'authenticated': False, 'message': 'Sign in to the provider CLI to start workers.'}

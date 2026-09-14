@@ -1,6 +1,6 @@
 # Sidecar Workers
 
-Local background AI workers with one shared preview service. Launch Devin, Claude, or Grok from a small CLI in Codex or Claude Code, and review each task's activity in its own browser page.
+Local background AI workers with one shared preview service. Launch Devin, Claude, Grok, or Codex from a small CLI in Codex or Claude Code, and review each task's activity in its own browser page.
 
 Sidecar keeps worker execution separate from the coordinating app and preview server. Restarting the app or HTTP service does not interrupt detached workers. Results are saved on disk.
 
@@ -16,7 +16,7 @@ python3 -m sidecar install
 
 Add `~/.local/bin` to PATH if needed. Installation creates the `sidecar` command, a skill for Codex (`~/.codex/skills`) and Claude Code (`~/.claude/skills`), and a macOS LaunchAgent. For another data location, use `python3 -m sidecar install --data-dir /path/to/sidecar-data`. No root access is required. Installation copies a small runtime into `~/Library/Application Support/SidecarWorkers/runtime` and keeps launch logs in `~/Library/Logs/SidecarWorkers`, so launchd does not need to create its own logs on a removable volume. Run the install command again after updating the checkout.
 
-Devin is discovered on PATH or in `/Applications/Devin - Next.app` or `/Applications/Devin.app`. Set `SIDECAR_DEVIN_BIN` before installation for a different location. Claude and Grok use their CLIs on PATH. No credentials are copied into Sidecar.
+Devin is discovered on PATH or in `/Applications/Devin - Next.app` or `/Applications/Devin.app`. Set `SIDECAR_DEVIN_BIN` before installation for a different location. Claude, Grok, and Codex use their CLIs on PATH. No credentials are copied into Sidecar.
 
 ## Install on Windows
 
@@ -44,7 +44,7 @@ Windows launches request process breakaway so the service and workers can outliv
 
 To keep histories on another drive, install with `py -3 -m sidecar install --data-dir "D:\Sidecar Data"`. The runtime remains in Local App Data so the scheduled check can start reliably. That data drive must be available when Sidecar runs. Rerun installation after updating the checkout or changing provider PATH entries. Finish or stop workers before reinstalling.
 
-Devin is discovered on PATH, or through `$env:SIDECAR_DEVIN_BIN = 'C:\path\to\devin.exe'` set before installation. Claude and Grok use the Windows CLIs on PATH, including npm `.cmd` launchers. Sidecar preserves each provider's existing login.
+Devin is discovered on PATH, or through `$env:SIDECAR_DEVIN_BIN = 'C:\path\to\devin.exe'` set before installation. Claude, Grok, and Codex use the Windows CLIs on PATH, including npm `.cmd` launchers. Sidecar preserves each provider's existing login.
 
 Commands use the same options on both platforms. Use native Windows repository paths and UTF-8 prompt files for long prompts or text with shell metacharacters:
 
@@ -58,11 +58,13 @@ Outside a recognized app session, add `--thread-id` with a UUID to task commands
 
 Devin's agent CLI is discovered inside `Devin` or `Devin - Next` under `%LOCALAPPDATA%\Programs`, `%ProgramFiles%`, or `%ProgramFiles(x86)%`, at `resources\app\extensions\windsurf\devin\bin\devin.exe`. The `devin-desktop` launcher is not the agent CLI. `SIDECAR_DEVIN_BIN` takes priority over PATH and the bundled locations; an invalid explicit override is reported rather than silently ignored.
 
+Worker processes use `CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP` on Windows for both ACP and shim transports. This hides worker consoles while retaining process-group handling. Interactive sign-in deliberately uses a separate visible console.
+
 ## First-use sign-in
 
 Before starting a worker, Sidecar checks the selected provider's sign-in. If the CLI is signed out, Sidecar opens its native login in a visible Windows console or macOS Terminal. Complete the provider's browser or terminal flow, then have your coordinating agent retry the original request. Signing into the desktop app does not necessarily sign into its separate agent CLI.
 
-The initial start returns `status: needs_auth`, `worker_started: false`, and a `request_id`. It creates no worker or prompt log. The agent checks `sidecar auth status devin` (or `claude`/`grok`) and retries the original start with that same `--request-id` once the status is `ready`. Login does not automatically execute a saved prompt. Repeated attempts reuse a pending login.
+The initial start returns `status: needs_auth`, `worker_started: false`, and a `request_id`. It creates no worker or prompt log. The agent checks `sidecar auth status devin` (or `claude`/`grok`/`codex`) and retries the original start with that same `--request-id` once the status is `ready`. Login does not automatically execute a saved prompt. Repeated attempts reuse a pending login.
 
 ```sh
 sidecar doctor
@@ -70,7 +72,7 @@ sidecar auth status devin
 sidecar auth login devin
 ```
 
-`doctor` reports discovery and sign-in for all three providers using the service's environment. `ready`, `needs_auth`, `not_installed`, and `check_failed` are distinct states; a connection or configuration error does not automatically trigger login. `doctor --skip-auth` checks discovery only. For a terminal without a desktop, use `sidecar start --no-login` and run `sidecar auth login devin --foreground` yourself on the host machine. The login response includes this fallback if the visible terminal cannot open.
+`doctor` reports discovery and sign-in for all four providers using the service's environment. `ready`, `needs_auth`, `not_installed`, and `check_failed` are distinct states; a connection or configuration error does not automatically trigger login. `doctor --skip-auth` checks discovery only. For a terminal without a desktop, use `sidecar start --no-login` and run `sidecar auth login devin --foreground` yourself on the host machine. The login response includes this fallback if the visible terminal cannot open.
 
 Provider login output stays in that visible terminal, outside worker logs. Sidecar stores only login progress and process metadata; credentials remain managed by the provider CLI. After updating an existing installation, rerun `python3 -m sidecar install` on macOS or `py -3 -m sidecar install` on Windows so the service and both agent skills receive the new flow.
 
@@ -106,8 +108,20 @@ The CLI checks the local service automatically. Warm launches need no manual ser
 | Devin | SWE-2 High | Smart | Ask |
 | Claude | Opus 5, High effort | auto | plan |
 | Grok | Latest numbered model, High effort | auto | plan |
+| Codex | Astra 6, Medium effort | workspace-write sandbox | read-only sandbox |
 
 Devin model choices are `swe-2-medium`, `swe-2-high`, and `swe-2-max`. Claude choices are `claude-opus-5` and `claude-fable-5-1`, with medium/high/xhigh effort. Availability depends on your installed CLI and account. Sidecar verifies Devin's model and mode; Claude/Grok reported model identity is displayed for review. A provider may reject actions in its native auto mode.
+
+Codex supports `gpt-6-astra` with `low`, `medium`, `high`, or `xhigh` effort and `gpt-5.6-sol` with `medium`, `high`, or `xhigh`. `light` is accepted as an alias for `low` on Astra. Both default to Medium. Install a current native Codex CLI on PATH (validated with 0.153.4); Sidecar checks `codex login status` and opens `codex login` on first use when needed. Availability depends on your Codex account. Workers use their own conversations, and clarification replies resume the exact same session. Codex's CLI may omit the model from its event stream, so the preview labels it as requested unless the provider reports it.
+
+From Claude Code or Codex:
+
+```sh
+sidecar start --repo /path/to/repo --title "Inspect the issue" --provider codex --model gpt-6-astra --effort low --mode read_only --prompt "Inspect the issue and explain the cause."
+sidecar start --repo /path/to/repo --title "Implement the fix" --provider codex --model gpt-5.6-sol --effort high --mode write --prompt "Implement the agreed fix and test it."
+```
+
+Codex uses `--ask-for-approval never` within the selected sandbox. If an operation needs broader access, it fails rather than waiting for terminal approval. Sidecar's permission queue supports Devin only. Nested Codex agents are disabled unless `--allow-subagents` is explicitly set. See the [Codex CLI reference](https://developers.openai.com/codex/cli/reference).
 
 Devin's remaining permission requests appear in status and the preview:
 
@@ -129,11 +143,11 @@ sidecar reply WORKER_ID QUESTION_ID --answer "Use the existing customer timezone
 
 Use `--file answer.txt` for a longer reply, or `--thread-id UUID` outside the original task. Answers are persisted before being delivered, and identical retries are safe. The preview displays questions and answers; mutations stay in the authenticated CLI.
 
-Claude and Grok resume the exact native conversation ID. Devin continues the same open ACP session. Provider permission modes remain unchanged. This is a question/reply channel, not arbitrary messages into a running tool call. The orchestrating agent must check status; Sidecar cannot wake an idle coordinating task.
+Claude, Grok, and Codex resume the exact native conversation ID. Devin continues the same open ACP session. Provider permission modes remain unchanged. This is a question/reply channel, not arbitrary messages into a running tool call. The orchestrating agent must check status; Sidecar cannot wake an idle coordinating task.
 
 Execution time pauses during clarification. `--question-timeout` defaults to 600 seconds per question, with up to five questions. Service restarts preserve pending questions and workers; machine restarts do not resume paid work automatically. Replies after expiry or stop are rejected.
 
-Nested agents are disabled by default. Claude/Grok enforce this through their provider flags, while Devin receives a prompt instruction. Pass `--allow-subagents` only when needed and authorized. Claude/Grok use `--max-turns 24` per provider turn; this can be adjusted from 1 to 200. Every worker is instructed to reserve at least half its execution budget for synthesis and verification. Provider errors, including cancelled tools and exhausted turn budgets, are preserved in status and saved results.
+Nested agents are disabled by default. Claude/Grok/Codex enforce this through their provider flags, while Devin receives a prompt instruction. Pass `--allow-subagents` only when needed and authorized. Claude/Grok use `--max-turns 24` per provider turn; this can be adjusted from 1 to 200. Every worker is instructed to reserve at least half its execution budget for synthesis and verification. Provider errors, including cancelled tools and exhausted turn budgets, are preserved in status and saved results.
 
 ## Process lifetime
 

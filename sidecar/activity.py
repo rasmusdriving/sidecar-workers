@@ -3,6 +3,7 @@ from pathlib import Path
 from .engine import setup
 setup()
 from runtime.message_stream import message_activity
+from runtime.codex_stream import codex_activity
 from runtime.coordinator import parse_question, paused_seconds
 
 def records(path):
@@ -44,7 +45,8 @@ def snapshot(job):
                 calls[key].update({k: v for k, v in update.items() if k in ('title', 'status', 'kind', 'rawInput', 'content', 'locations')})
     if meta['provider'] != 'devin':
         for path in sorted((job / 'artifacts').glob('run-*/provider-runs/*/raw/' + meta['provider'] + '.stdout.log')):
-            parsed = message_activity(path.read_text(encoding='utf-8', errors='replace'))
+            decode = codex_activity if meta['provider'] == 'codex' else message_activity
+            parsed = decode(path.read_text(encoding='utf-8', errors='replace'))
             items.extend(parsed['items'])
             if parsed['model']:
                 meta['verified_model'] = parsed['model']

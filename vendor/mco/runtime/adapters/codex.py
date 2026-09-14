@@ -1,9 +1,13 @@
 from __future__ import annotations
 
-from typing import Any, List
+import json
+import os
+import uuid
+from typing import List
 
 from ..answer_transport import AnswerTransport, decode_codex_events
 from ..contracts import CapabilitySet, TaskInput
+from ..codex_stream import codex_activity
 from .shim import ShimAdapterBase
 
 
@@ -30,7 +34,7 @@ class CodexAdapter(ShimAdapterBase):
         return ["sandbox", "approval_policy", "bypass"]
 
     def supported_model_keys(self) -> List[str]:
-        return ["model"]
+        return ["model", "effort"]
 
     def supported_context_keys(self) -> List[str]:
         return ["context_files"]
@@ -38,7 +42,16 @@ class CodexAdapter(ShimAdapterBase):
     def decode_transport(self, raw: str) -> AnswerTransport:
         return decode_codex_events(raw)
 
+    def conversation_activity(self, raw: str):
+        return codex_activity(raw)
+
     def _build_command(self, input_task: TaskInput) -> List[str]:
+        return self._command(input_task)
+
+    def _build_resume_command(self, task: TaskInput, session_id: str) -> List[str]:
+        return self._command(task, str(uuid.UUID(session_id)))
+
+    def _command(self, input_task: TaskInput, session_id: str | None = None) -> List[str]:
         sandbox = "workspace-write"
         raw_permissions = input_task.metadata.get("provider_permissions")
         if isinstance(raw_permissions, dict):
@@ -58,17 +71,22 @@ class CodexAdapter(ShimAdapterBase):
             sandbox = "read-only"
             bypass = None
         cmd = [
-            "codex",
+            "codex", "-C", input_task.repo_root,
         ]
         if bypass == "true":
             cmd.append("--dangerously-bypass-approvals-and-sandbox")
         else:
             if isinstance(approval_policy, str) and approval_policy.strip():
                 cmd.extend(["--ask-for-approval", approval_policy.strip()])
-        cmd.extend(["exec", "--skip-git-repo-check", "-C", input_task.repo_root])
         if bypass != "true":
             cmd.extend(["--sandbox", sandbox])
+        cmd.append('exec')
+        if session_id:
+            cmd.append('resume')
+        cmd.append('--skip-git-repo-check')
         cmd.append("--json")
+        if os.environ.get('SIDECAR_ALLOW_SUBAGENTS') != '1':
+            cmd.extend(['--disable', 'multi_agent', '--disable', 'multi_agent_v2'])
         # Context policy is opt-in: only apply when provider_context key is present.
         if "provider_context" in input_task.metadata:
             ctx = input_task.metadata.get("provider_context", {})
@@ -82,6 +100,14 @@ class CodexAdapter(ShimAdapterBase):
         model = input_task.metadata.get("model")
         if isinstance(model, str) and model.strip():
             cmd.extend(["--model", model.strip()])
+        effort = input_task.metadata.get('effort')
+        if effort:
+            if effort not in ('low', 'medium', 'high', 'xhigh'):
+                raise ValueError('Unsupported Codex reasoning effort')
+            cmd.extend(['-c', 'model_reasoning_effort=' + json.dumps(effort)])
+        cmd.append('--')
+        if session_id:
+            cmd.append(session_id)
         cmd.append(input_task.prompt)
         return cmd
 
@@ -101,13 +127,4 @@ class CodexAdapter(ShimAdapterBase):
         ]
 
     def _is_success(self, return_code: int, stdout_text: str, stderr_text: str) -> bool:
-        if return_code == 0:
-            return True
-        # Codex may emit MCP startup errors and still return useful JSON events.
-        if stdout_text.strip() and "\"type\":\"turn.completed\"" in stdout_text:
-            return True
-        if stdout_text.strip() and "\"ok\":true" in stdout_text:
-            return True
-        if "mcp client" in stderr_text.lower() and stdout_text.strip():
-            return True
-        return False
+        return return_code == 0 and self.decode_transport(stdout_text).status == 'succeeded'
