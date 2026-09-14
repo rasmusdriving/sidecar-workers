@@ -100,7 +100,7 @@ class PlatformTests(unittest.TestCase):
             binary.parent.mkdir()
             binary.touch()
             config = dict(provider='devin', repo=root, model='swe-2-high', mode='read_only', timeout=10)
-            with patch.dict(os.environ, SIDECAR_DEVIN_BIN=''), patch('sidecar.engine.shutil.which', return_value=str(binary)):
+            with patch.dict(os.environ, SIDECAR_DEVIN_BIN=''), patch('sidecar.providers.shutil.which', return_value=str(binary)):
                 _, env = command(config, data, data)
             line = (data / 'engine-config/agents.yaml').read_text(encoding='utf-8').split('    command: ')[1]
             self.assertEqual(shlex.split(json.loads(line)), [str(binary), 'acp'])

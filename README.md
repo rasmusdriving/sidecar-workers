@@ -16,7 +16,7 @@ python3 -m sidecar install
 
 Add `~/.local/bin` to PATH if needed. Installation creates the `sidecar` command, a skill for Codex (`~/.codex/skills`) and Claude Code (`~/.claude/skills`), and a macOS LaunchAgent. For another data location, use `python3 -m sidecar install --data-dir /path/to/sidecar-data`. No root access is required. Installation copies a small runtime into `~/Library/Application Support/SidecarWorkers/runtime` and keeps launch logs in `~/Library/Logs/SidecarWorkers`, so launchd does not need to create its own logs on a removable volume. Run the install command again after updating the checkout.
 
-Devin is discovered in `/Applications/Devin - Next.app` or `/Applications/Devin.app`. Set `SIDECAR_DEVIN_BIN` before installation for a different location. Claude and Grok use their existing signed-in CLIs on PATH. No credentials are copied into Sidecar.
+Devin is discovered on PATH or in `/Applications/Devin - Next.app` or `/Applications/Devin.app`. Set `SIDECAR_DEVIN_BIN` before installation for a different location. Claude and Grok use their CLIs on PATH. No credentials are copied into Sidecar.
 
 ## Install on Windows
 
@@ -55,6 +55,24 @@ sidecar stop WORKER_ID
 ```
 
 Outside a recognized app session, add `--thread-id` with a UUID to task commands. Windows history imports use directory junctions, so Developer Mode and symlink privileges are not required. Use local history folders; junctions cannot target network shares.
+
+Devin's agent CLI is discovered inside `Devin` or `Devin - Next` under `%LOCALAPPDATA%\Programs`, `%ProgramFiles%`, or `%ProgramFiles(x86)%`, at `resources\app\extensions\windsurf\devin\bin\devin.exe`. The `devin-desktop` launcher is not the agent CLI. `SIDECAR_DEVIN_BIN` takes priority over PATH and the bundled locations; an invalid explicit override is reported rather than silently ignored.
+
+## First-use sign-in
+
+Before starting a worker, Sidecar checks the selected provider's sign-in. If the CLI is signed out, Sidecar opens its native login in a visible Windows console or macOS Terminal. Complete the provider's browser or terminal flow, then have your coordinating agent retry the original request. Signing into the desktop app does not necessarily sign into its separate agent CLI.
+
+The initial start returns `status: needs_auth`, `worker_started: false`, and a `request_id`. It creates no worker or prompt log. The agent checks `sidecar auth status devin` (or `claude`/`grok`) and retries the original start with that same `--request-id` once the status is `ready`. Login does not automatically execute a saved prompt. Repeated attempts reuse a pending login.
+
+```sh
+sidecar doctor
+sidecar auth status devin
+sidecar auth login devin
+```
+
+`doctor` reports discovery and sign-in for all three providers using the service's environment. `ready`, `needs_auth`, `not_installed`, and `check_failed` are distinct states; a connection or configuration error does not automatically trigger login. `doctor --skip-auth` checks discovery only. For a terminal without a desktop, use `sidecar start --no-login` and run `sidecar auth login devin --foreground` yourself on the host machine. The login response includes this fallback if the visible terminal cannot open.
+
+Provider login output stays in that visible terminal, outside worker logs. Sidecar stores only login progress and process metadata; credentials remain managed by the provider CLI. After updating an existing installation, rerun `python3 -m sidecar install` on macOS or `py -3 -m sidecar install` on Windows so the service and both agent skills receive the new flow.
 
 ## Coordinating apps
 

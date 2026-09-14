@@ -271,7 +271,7 @@ serve(data, app_probe=probe, check_interval=.05)
 
     def test_concurrent_ensure_singleton(self):
         env={**os.environ,'SIDECAR_HOME':str(self.data)}
-        processes=[subprocess.Popen([sys.executable,'-m','sidecar','doctor'],cwd=ROOT,env=env,stdout=subprocess.PIPE,text=True) for _ in range(4)]
+        processes=[subprocess.Popen([sys.executable,'-m','sidecar','doctor','--skip-auth'],cwd=ROOT,env=env,stdout=subprocess.PIPE,text=True) for _ in range(4)]
         values=[]
         for p in processes:
             out,_=p.communicate(timeout=10)

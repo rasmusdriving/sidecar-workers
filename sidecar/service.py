@@ -18,6 +18,7 @@ from .common import ROOT, Lifecycle, active_workers, app_running, atomic, data_d
 from .platform import acquire_lock, spawn_detached, windows
 from .activity import snapshot
 from .models import resolve_model
+from .providers import provider_status, provider_statuses
 
 
 class LoopbackServer(ThreadingHTTPServer):
@@ -233,6 +234,9 @@ def serve(data=None, *, app_probe=app_running, grace=60, check_interval=2):
                 body = json.loads(self.rfile.read(size))
                 if self.path == '/start':
                     result = manager.start(body)
+                elif self.path == '/provider-status':
+                    result = (provider_status(body['provider'], body.get('check_auth', True))
+                              if body.get('provider') else provider_statuses(body.get('check_auth', True)))
                 elif self.path == '/permission':
                     result = manager.permission(body)
                 elif self.path == '/reply':
