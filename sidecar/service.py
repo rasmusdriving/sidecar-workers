@@ -254,24 +254,29 @@ def serve(data=None, *, app_probe=app_running, grace=60, check_interval=2):
     # Finish in-flight responses before interpreter shutdown. Client timeouts
     # keep shutdown bounded even if a connection stops sending data.
     server.daemon_threads = False
-    server.timeout = .5
     config.update(port=server.server_port, pid=os.getpid())
     manager = Manager(data, f'http://127.0.0.1:{server.server_port}/' + config['token'])
     atomic(data / 'service.json', config)
     (data / 'service.json').chmod(0o600)
     lifecycle = Lifecycle(grace)
-    last_check = 0
+    # Windows presence/liveness probes launch subprocesses and can take seconds.
+    # Accept HTTP requests independently so health checks, previews, and worker
+    # cancellation remain available throughout those probes.
+    http_thread = threading.Thread(target=server.serve_forever,
+                                   kwargs={'poll_interval': .1}, name='sidecar-http')
+    http_thread.start()
     try:
         while not stopping.is_set():
-            server.handle_request()
-            if time.monotonic() - last_check >= check_interval:
-                last_check = time.monotonic()
-                manager.reap()
-                if lifecycle.should_exit(app_probe(), active_workers(data), last_check):
-                    # Recheck immediately before exiting; reopening cancels shutdown.
-                    if lifecycle.should_exit(app_probe(), active_workers(data), time.monotonic()):
-                        break
+            checked_at = time.monotonic()
+            manager.reap()
+            if lifecycle.should_exit(app_probe(), active_workers(data), checked_at):
+                # Recheck immediately before exiting; reopening cancels shutdown.
+                if lifecycle.should_exit(app_probe(), active_workers(data), time.monotonic()):
+                    break
+            stopping.wait(max(0, check_interval - (time.monotonic() - checked_at)))
     finally:
+        server.shutdown()
+        http_thread.join()
         server.server_close()
         lock.close()
 

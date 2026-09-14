@@ -156,9 +156,8 @@ class ProcessTests(unittest.TestCase):
         # it exited and how long it took: an empty stderr on its own cannot
         # distinguish a slow start from a service that returned immediately.
         # Assert on the readiness actually observed. Re-probing here made the
-        # check flaky on Windows: serve() spawns tasklist.exe and a PowerShell
-        # query per active worker inline with handle_request(), so a healthy
-        # service can miss the next one-second health probe while it blocks.
+        # check flaky on Windows when lifecycle probes blocked request handling.
+        # A separate regression test checks responsiveness during those probes.
         started = time.monotonic()
         deadline = started + 20
         ready = False
@@ -180,6 +179,48 @@ class ProcessTests(unittest.TestCase):
         self.assertEqual(first['port'],second['port'])
         self.assertEqual(first['token'],second['token'])
         self.assertNotEqual(first['pid'],second['pid'])
+
+    def test_health_and_stop_respond_while_lifecycle_probe_is_blocked(self):
+        tid = str(uuid.uuid4())
+        worker_id = 'devin-' + uuid.uuid4().hex
+        job = self.data / 'threads' / tid / worker_id
+        job.mkdir(parents=True)
+        atomic(job / 'job.json', {'thread_id': tid})
+        entered = self.data / 'probe-entered'
+        release = self.data / 'release-probe'
+        code = '''
+import sys, time
+from pathlib import Path
+from sidecar.service import serve
+data = Path(sys.argv[1])
+def probe():
+    (data / 'probe-entered').touch()
+    while not (data / 'release-probe').exists():
+        time.sleep(.01)
+    return True
+serve(data, app_probe=probe, check_interval=.05)
+'''
+        process = subprocess.Popen([sys.executable, '-c', code, str(self.data)], cwd=ROOT)
+        self.procs.append(process)
+        self.addCleanup(release.touch)
+        deadline = time.monotonic() + 10
+        while not entered.exists() and time.monotonic() < deadline:
+            healthy(self.data)  # Also triggers the lifecycle check on the old server.
+            time.sleep(.02)
+        self.assertTrue(entered.exists(), 'lifecycle probe never started')
+        self.assertTrue(healthy(self.data), 'health blocked behind lifecycle probe')
+        config, host = endpoint(self.data)
+        body = json.dumps({'thread_id': tid, 'worker_id': worker_id}).encode()
+        with urlopen(Request(host + '/stop', body, {
+            'Authorization': 'Bearer ' + config['token'],
+        }, method='POST'), timeout=1) as response:
+            self.assertTrue(json.load(response)['stop_requested'])
+        self.assertTrue((job / 'stop-requested.json').exists())
+        release.touch()
+        atomic(job / 'done.json', {'status': 'complete'})
+        request(self.data, 'shutdown', {})
+        process.wait(timeout=5)
+        self.assertEqual(process.returncode, 0)
 
     def test_running_app_keeps_service_and_reopen_cancels_exit(self):
         flag=self.data/'app-open';flag.touch()
