@@ -104,7 +104,7 @@ class LoginTests(unittest.TestCase):
             self.assertEqual(result['status'], 'opened')
             command = launch.call_args.args[0]
             self.assertEqual(command[:3], ['open', '-a', 'Terminal'])
-            script = Path(command[3]).read_text()
+            script = Path(command[3]).read_text(encoding='utf-8')
             self.assertEqual(shlex.split(script.split('exec ', 1)[1]),
                              [sys.executable, '-m', 'sidecar.auth', 'devin', binary, root])
 

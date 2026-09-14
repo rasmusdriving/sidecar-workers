@@ -5,6 +5,7 @@ from pathlib import Path
 import shlex
 import subprocess
 import sys
+import threading
 import time
 
 from .common import ROOT, atomic, host_free_env
@@ -47,8 +48,11 @@ def open_login(data, provider, binary):
             if windows():
                 # An interactive console is required for callbacks and fallback
                 # prompts. Do not redirect its output into Sidecar logs.
-                subprocess.Popen(cmd, cwd=ROOT, env=host_free_env(), close_fds=True,
-                                 creationflags=0x00000010)  # CREATE_NEW_CONSOLE
+                child = subprocess.Popen(cmd, cwd=ROOT, env=host_free_env(), close_fds=True,
+                                         creationflags=0x00000010)  # CREATE_NEW_CONSOLE
+                # Reap the handle if the caller stays alive, without keeping a
+                # short-lived CLI invocation open for the interactive login.
+                threading.Thread(target=child.wait, daemon=True).start()
             elif sys.platform == 'darwin':
                 script = folder / (provider + '-login.command')
                 script.write_text('#!/bin/sh\ncd ' + shlex.quote(str(ROOT)) + '\nexec ' + shlex.join(cmd) + '\n', encoding='utf-8')
