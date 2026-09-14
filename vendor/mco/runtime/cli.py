@@ -2339,6 +2339,7 @@ def main(argv: List[str] | None = None) -> int:
         if unknown:
             return _invocation_error("invalid_providers", "Unknown providers: {}".format(", ".join(dict.fromkeys(unknown))))
         effective_provider_context: Dict[str, Dict[str, object]] = {}
+        effective_provider_models: Dict[str, Dict[str, object]] = {}
         for invocation in invocations:
             preview = provider_policy_preview(invocation.provider, adapter_map[invocation.provider], cfg.policy)
             if preview["would_fail_strict"]:
@@ -2359,6 +2360,10 @@ def main(argv: List[str] | None = None) -> int:
                     "config_error",
                     "invocation '{}': {}".format(invocation.invocation_id, preview["failure_reason"]),
                 )
+            applied_model = preview.get("applied_model", {})
+            effective_provider_models[invocation.provider] = (
+                dict(applied_model) if isinstance(applied_model, Mapping) else {}
+            )
             discovery = discover_models(invocation.provider)
             models = discovery.get("models", []) if isinstance(discovery, dict) else []
             known_model_ids = {
@@ -2452,6 +2457,7 @@ def main(argv: List[str] | None = None) -> int:
                 hard_timeout_seconds=cfg.policy.timeout_seconds,
                 provider_permissions=cfg.policy.provider_permissions,
                 provider_context=effective_provider_context,
+                provider_models=effective_provider_models,
                 provider_timeouts=cfg.policy.provider_timeouts,
                 max_provider_parallelism=cfg.policy.max_provider_parallelism,
                 poll_interval_seconds=cfg.policy.poll_interval_seconds,

@@ -14,6 +14,7 @@ from urllib.request import Request, urlopen
 from .common import ROOT, active_workers, atomic, data_dir, identity, install_skill, remove_skill, thread_dir
 
 from .platform import acquire_lock, spawn_detached, link_history, windows
+from .providers import PROVIDERS
 
 LABEL = 'io.sidecar-workers.service'
 
@@ -111,7 +112,7 @@ def main():
     start = sub.add_parser('start')
     start.add_argument('--repo',required=True)
     start.add_argument('--title',required=True)
-    start.add_argument('--provider',choices=['devin','claude','grok'],default='devin')
+    start.add_argument('--provider',choices=PROVIDERS,default='devin')
     start.add_argument('--model')
     start.add_argument('--effort')
     start.add_argument('--mode',choices=['read_only','write'],default='read_only')
@@ -141,7 +142,7 @@ def main():
     doctor.add_argument('--skip-auth', action='store_true', help='Only check executable discovery')
     auth = sub.add_parser('auth')
     auth.add_argument('operation', choices=['status', 'login'])
-    auth.add_argument('provider', choices=['devin', 'claude', 'grok'])
+    auth.add_argument('provider', choices=PROVIDERS)
     auth.add_argument('--foreground', action='store_true', help='Sign in using this interactive terminal')
     start.add_argument('--no-login', action='store_true', help='Report missing sign-in without opening a terminal')
     sub.add_parser('uninstall')

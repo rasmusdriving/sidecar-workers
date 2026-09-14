@@ -18,7 +18,7 @@ from .common import ROOT, Lifecycle, active_workers, app_running, atomic, data_d
 from .platform import acquire_lock, spawn_detached, windows
 from .activity import snapshot
 from .models import resolve_model
-from .providers import provider_status, provider_statuses
+from .providers import PROVIDERS, provider_status, provider_statuses
 
 
 class LoopbackServer(ThreadingHTTPServer):
@@ -75,7 +75,7 @@ class Manager:
     def start(self, body):
         tid = identity(body['thread_id'])
         provider = body.get('provider', 'devin')
-        if provider not in ('devin', 'claude', 'grok'):
+        if provider not in PROVIDERS:
             raise ValueError('Unknown provider')
         mode = body.get('mode', 'read_only')
         if mode not in ('read_only', 'write'):

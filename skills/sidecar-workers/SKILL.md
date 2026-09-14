@@ -1,6 +1,6 @@
 ---
 name: sidecar-workers
-description: Launch and follow local Devin, Claude, or Grok workers through the shared Sidecar service and task-specific preview. Use when the user requests these workers or authorized delegation. Claude and Grok require an explicit provider request.
+description: Launch and follow local Devin, Claude, Grok, or Codex workers through the shared Sidecar service and task-specific preview. Use when the user requests these workers or authorized delegation. Claude, Grok, and Codex require an explicit provider request.
 ---
 
 # Sidecar workers
@@ -15,13 +15,14 @@ sidecar start --repo /absolute/repo --title "Inspect the issue" --provider devin
 
 Use `--file /absolute/prompt.txt` for longer prompts. Use `--mode write` when edits are authorized. For parallel writers, first create isolated worktrees and divide ownership. Sidecar does not create worktrees or integrate changes. Respect higher-priority rules about when delegation is allowed.
 
-Devin is the default provider: SWE-2 High for most work, Max for important work and design, Medium only on explicit request. Claude or Grok require an explicit user request for that provider; do not add them automatically for review. Supported choices:
+Devin is the default provider: SWE-2 High for most work, Max for important work and design, Medium only on explicit request. Claude, Grok, or Codex require an explicit user request for that provider; do not add them automatically for review. Supported choices:
 
 - Devin: `--model swe-2-high`, `swe-2-max`, or `swe-2-medium`; no separate effort flag.
 - Claude: `--model claude-opus-5` or `claude-fable-5-1` and `--effort medium|high|xhigh`. Default Opus 5 High.
 - Grok: `--model latest --effort high`. The CLI resolves the current model catalog.
+- Codex: `--provider codex --model gpt-6-astra --effort low|medium|high|xhigh` or `--model gpt-5.6-sol --effort medium|high|xhigh`. Defaults to Astra 6 Medium; `light` aliases Astra Low. Use the requested model and effort.
 
-Write workers use native Devin Smart / Claude auto / Grok auto. Inspection uses Ask / plan / plan. These are provider permission modes, not OS sandboxes. Preserve user scope and do not enable bypass modes to get around a failure.
+Write workers use native Devin Smart / Claude auto / Grok auto. Inspection uses Ask / plan / plan. These are provider permission modes, not OS sandboxes. Codex uses a read-only sandbox for inspection and a workspace-write sandbox for authorized edits, with approval policy never. A blocked operation fails; it does not enter the Devin permission queue. Preserve user scope and do not enable bypass modes to get around a failure.
 
 ### First-use sign-in
 
@@ -31,7 +32,9 @@ Check `sidecar auth status PROVIDER` while waiting. Once it reports `ready`, ret
 
 If opening the terminal fails, show the returned `manual_command` for the user to run in their own terminal. `sidecar auth login PROVIDER` retries the visible login; `--foreground` runs it in the caller's interactive terminal. For a headless session, use `sidecar start --no-login` and guide the user through that manual command on the host machine. Never declare success until a fresh auth status confirms it.
 
-`sidecar doctor` reports `binary`, `status`, and `authenticated` for Devin, Claude, and Grok. `not_installed` means discovery failed; `check_failed` means the check was inconclusive (for example, a network error), not that the user must sign in. Diagnose that failure rather than opening login automatically. Windows Devin discovery includes the per-user and Program Files app bundles; `SIDECAR_DEVIN_BIN` remains the explicit override.
+`sidecar doctor` reports `binary`, `status`, and `authenticated` for Devin, Claude, Grok, and Codex. `not_installed` means discovery failed; `check_failed` means the check was inconclusive (for example, a network error), not that the user must sign in. Diagnose that failure rather than opening login automatically. Windows Devin discovery includes the per-user and Program Files app bundles; `SIDECAR_DEVIN_BIN` remains the explicit override.
+
+Codex uses its native `codex login status` and `codex login` commands. It must be installed on PATH on the same machine as Sidecar. The preview shows Codex tool activity and messages. If the CLI omits a reported model, the label shows the requested model, not a verified one. Clarification replies resume the exact Codex session.
 
 ### Connected tools in Devin
 
@@ -58,7 +61,7 @@ For Devin `needs_attention`, inspect the exact command, repository, and original
 sidecar permission WORKER_ID REQUEST_ID allow_once
 ```
 
-Use `deny` if it is outside scope, or obtain required authorization. Never approve a queue blindly. Requests expire after five minutes within the overall worker timeout. This coordinating permission queue currently supports Devin only; inspect Claude/Grok blocked results and resolve authorized follow-up work in the parent. Compare each provider's reported model with the requested model.
+Use `deny` if it is outside scope, or obtain required authorization. Never approve a queue blindly. Requests expire after five minutes within the overall worker timeout. This coordinating permission queue currently supports Devin only; inspect Claude/Grok/Codex blocked results and resolve authorized follow-up work in the parent. Compare each provider's reported model with the requested model.
 
 `sidecar stop WORKER_ID` cancels only that task's named worker and reports `stop_requested: false` when that worker had already finished. Retrying a stop is safe. Reuse an explicit `--request-id UUID` when retrying an uncertain start to avoid duplicate jobs. New starts do not resume previous provider conversations; provide relevant prior context in follow-up jobs. Replies to a pending clarification continue the existing conversation.
 
@@ -75,6 +78,6 @@ sidecar reply WORKER_ID QUESTION_ID --answer "Concrete answer and relevant scope
 
 Use `--file` for a longer answer. Never answer an authorization question on the user's behalf without existing authorization. If required information is unavailable, ask the user and keep independent work moving. Polling status is still required: Sidecar cannot wake a finished coordinating turn. Do not leave active workers unattended at turn end.
 
-Replies use Claude/Grok's exact native session ID; Devin continues its open ACP session. They do not start a fresh conversation or change permission mode. Questions and replies survive preview-service restarts. Execution time pauses while awaiting a reply, with a separate `--question-timeout` (default 600 seconds), and a maximum of five questions per worker. Expired or stopped workers cannot receive new replies. Retrying the same answer is safe; changing an already submitted answer is rejected.
+Replies use Claude/Grok/Codex's exact native session ID; Devin continues its open ACP session. They do not start a fresh conversation or change permission mode. Questions and replies survive preview-service restarts. Execution time pauses while awaiting a reply, with a separate `--question-timeout` (default 600 seconds), and a maximum of five questions per worker. Expired or stopped workers cannot receive new replies. Retrying the same answer is safe; changing an already submitted answer is rejected.
 
-Nested delegation is disabled by default (provider tool restriction for Claude/Grok, prompt instruction for Devin). Use `--allow-subagents` only if delegation is authorized and needed. Claude/Grok default to `--max-turns 24` per conversation turn; use `--max-turns N` to adjust it. All providers receive instructions to reserve time for synthesis and verification. These are work limits, not filesystem sandboxes.
+Nested delegation is disabled by default (provider restrictions for Claude/Grok/Codex, prompt instruction for Devin). Use `--allow-subagents` only if delegation is authorized and needed. Claude/Grok default to `--max-turns 24` per conversation turn; use `--max-turns N` to adjust it. All providers receive instructions to reserve time for synthesis and verification. These are work limits, not filesystem sandboxes.

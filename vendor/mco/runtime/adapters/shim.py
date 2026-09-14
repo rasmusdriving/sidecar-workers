@@ -103,6 +103,13 @@ class ShimAdapterBase:
     def decode_transport(self, raw: str) -> AnswerTransport:
         return decode_plain_text(raw)
 
+    def conversation_activity(self, raw: str):
+        from ..message_stream import message_activity
+        return message_activity(raw) if self.id in ('claude', 'grok') else {}
+
+    def _build_resume_command(self, task: TaskInput, session_id: str) -> List[str]:
+        return self._build_command(task) + ['--resume', session_id]
+
     def run(self, input_task: TaskInput) -> TaskRunRef:
         command_override = input_task.metadata.get("command_override")
         cmd = command_override if isinstance(command_override, list) else self._build_command(input_task)
@@ -187,13 +194,12 @@ class ShimAdapterBase:
             )
 
         from ..coordinator import directory, parse_question, create_question, poll_reply
-        from ..message_stream import message_activity
         if handle.question:
             answer = poll_reply(handle.question)
             if answer is not None:
                 # Resume the exact provider session, never the directory's latest session.
                 task = replace(handle.task, prompt=answer)
-                cmd = self._build_command(task) + ['--resume', handle.session_id]
+                cmd = self._build_resume_command(task, handle.session_id)
                 handle.output_offset = handle.stdout_path.stat().st_size
                 handle.error_offset = handle.stderr_path.stat().st_size
                 handle.stdout_file = handle.stdout_path.open('a', encoding='utf-8')
@@ -231,7 +237,7 @@ class ShimAdapterBase:
         turn_stdout = handle.stdout_path.read_bytes()[handle.output_offset:].decode('utf-8')
         turn_stderr = handle.stderr_path.read_bytes()[handle.error_offset:].decode('utf-8')
         success = self._is_success(return_code, turn_stdout, turn_stderr)
-        state = message_activity(turn_stdout) if self.id in ('claude', 'grok') else {}
+        state = self.conversation_activity(turn_stdout)
         if handle.session_id and state.get('session_id') != handle.session_id:
             raise RuntimeError('Provider resumed with a different or missing session identity')
         question = parse_question(state.get('last_answer')) if success and directory() else None
@@ -314,8 +320,10 @@ class ShimAdapterBase:
         return shutil.which(self.binary_name, path=env.get("PATH"))
 
     def _probe_version(self, binary: str) -> Optional[str]:
+        command, options = prepare_spawn([binary, "--version"], _sanitize_env())
         result = subprocess.run(
-            [binary, "--version"],
+            command,
+            **options,
             capture_output=True,
             text=True,
             check=False,
@@ -325,9 +333,10 @@ class ShimAdapterBase:
         return lines[-1].strip() if lines else None
 
     def _probe_auth(self, binary: str) -> tuple[bool, str]:
-        cmd = self._auth_check_command(binary)
+        cmd, options = prepare_spawn(self._auth_check_command(binary), _sanitize_env())
         result = subprocess.run(
             cmd,
+            **options,
             capture_output=True,
             text=True,
             check=False,

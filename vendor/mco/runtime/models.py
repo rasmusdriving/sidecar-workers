@@ -6,11 +6,15 @@ import subprocess
 from pathlib import Path
 from typing import Any, Dict, List
 
+from .platform import prepare_spawn
+
 
 def _run_model_probe(binary: str, args: List[str], timeout: int = 15) -> Dict[str, Any]:
     try:
+        command, options = prepare_spawn([binary] + args)
         result = subprocess.run(
-            [binary] + args,
+            command,
+            **options,
             capture_output=True,
             text=True,
             timeout=timeout,

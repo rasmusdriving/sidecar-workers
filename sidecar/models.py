@@ -14,6 +14,14 @@ def resolve_model(provider, model, effort):
         if effort and effort not in ('medium', 'high', 'xhigh'):
             raise ValueError('Claude effort must be medium, high, or xhigh')
         return model, effort or 'high'
+    if provider == 'codex':
+        model = model or 'gpt-6-astra'
+        effort = 'low' if effort == 'light' else effort or 'medium'
+        allowed = {'gpt-6-astra': ('low', 'medium', 'high', 'xhigh'),
+                   'gpt-5.6-sol': ('medium', 'high', 'xhigh')}
+        if model not in allowed or effort not in allowed[model]:
+            raise ValueError('Codex supports gpt-6-astra with low/medium/high/xhigh or gpt-5.6-sol with medium/high/xhigh')
+        return model, effort
     if effort not in (None, 'high'):
         raise ValueError('Grok workers use high reasoning')
     if not model or model == 'latest':
