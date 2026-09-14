@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from typing import Any, List
 
 from ..contracts import CapabilitySet, TaskInput
@@ -61,6 +63,10 @@ class GrokAdapter(ShimAdapterBase):
             if effort != "high":
                 raise ValueError("Grok workers require high reasoning effort")
             command.extend(["--reasoning-effort", effort])
+        if os.environ.get('SIDECAR_ALLOW_SUBAGENTS') == '1':
+            command.remove('--no-subagents')
+        if os.environ.get('SIDECAR_MAX_TURNS'):
+            command.extend(['--max-turns', os.environ['SIDECAR_MAX_TURNS']])
         return command
 
     def _build_command_for_record(self) -> List[str]:

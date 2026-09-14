@@ -1,5 +1,4 @@
 import argparse
-import fcntl
 import json
 import os
 import plistlib
@@ -14,11 +13,13 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from .common import ROOT, active_workers, atomic, data_dir, identity, thread_dir
 
+from .platform import acquire_lock, spawn_detached, link_history, windows
+
 LABEL = 'io.sidecar-workers.service'
 
 
 def endpoint(data):
-    config = json.loads((data / 'service.json').read_text())
+    config = json.loads((data / 'service.json').read_text(encoding='utf-8'))
     return config, f"http://127.0.0.1:{config['port']}"
 
 
@@ -31,16 +32,15 @@ def healthy(data):
         return False
 
 
-def ensure(data):
+def ensure(data, *, runtime=ROOT):
     if healthy(data):
         return
     data.mkdir(parents=True, exist_ok=True, mode=0o700)
-    with (data / 'startup.lock').open('w') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    with acquire_lock(data / 'startup.lock'):
         if healthy(data):
             return
         with (data / 'service.log').open('a') as log:
-            proc = subprocess.Popen([sys.executable, '-m', 'sidecar.service'], cwd=ROOT, env={**os.environ,'SIDECAR_HOME':str(data)}, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
+            proc = spawn_detached([sys.executable, '-m', 'sidecar.service'], cwd=runtime, env={**os.environ,'SIDECAR_HOME':str(data)}, stdin=subprocess.DEVNULL, stdout=log, stderr=log)
         for _ in range(100):
             if healthy(data):
                 return
@@ -58,10 +58,15 @@ def request(data, action, body):
         with urlopen(req, timeout=30) as response:
             return json.load(response)
     except HTTPError as exc:
-        raise ValueError(json.load(exc).get('error', str(exc))) from exc
+        with exc:
+            message = json.load(exc).get('error', str(exc))
+        raise ValueError(message) from exc
 
 
 def install(data):
+    if windows():
+        from .windows_install import install as install_windows
+        return install_windows(data)
     if sys.platform != 'darwin':
         raise ValueError('LaunchAgent installation is macOS-only')
     data.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -75,7 +80,7 @@ def install(data):
     bindir.mkdir(parents=True, exist_ok=True)
     import shlex
     launcher = '#!/bin/sh\nexport SIDECAR_HOME=' + shlex.quote(str(data)) + '\ncd ' + shlex.quote(str(runtime)) + '\nexec ' + shlex.quote(sys.executable) + ' -m sidecar "$@"\n'
-    (bindir / 'sidecar').write_text(launcher)
+    (bindir / 'sidecar').write_text(launcher, encoding='utf-8')
     (bindir / 'sidecar').chmod(0o755)
     plist = Path.home() / 'Library/LaunchAgents' / (LABEL + '.plist')
     plist.parent.mkdir(parents=True, exist_ok=True)
@@ -113,14 +118,22 @@ def main():
     start.add_argument('--effort')
     start.add_argument('--mode',choices=['read_only','write'],default='read_only')
     start.add_argument('--timeout',type=int,default=600)
+    start.add_argument('--question-timeout',type=int,default=600)
+    start.add_argument('--max-turns',type=int,default=24)
+    start.add_argument('--allow-subagents',action='store_true')
     start.add_argument('--request-id',default=None)
     group = start.add_mutually_exclusive_group(required=True)
     group.add_argument('--prompt')
     group.add_argument('--file')
-    for action in [start, sub.add_parser('preview'), sub.add_parser('status'), sub.add_parser('permission'), sub.add_parser('stop')]:
+    for action in [start, sub.add_parser('preview'), sub.add_parser('status'), sub.add_parser('permission'), sub.add_parser('stop'), sub.add_parser('reply')]:
         action.add_argument('--thread-id')
-        if action.prog.endswith(('status','permission','stop')):
+        if action.prog.endswith(('status','permission','stop','reply')):
             action.add_argument('worker_id',nargs='?' if action.prog.endswith('status') else None)
+        if action.prog.endswith('reply'):
+            action.add_argument('question_id')
+            group = action.add_mutually_exclusive_group(required=True)
+            group.add_argument('--answer')
+            group.add_argument('--file')
         if action.prog.endswith('status'):
             action.add_argument('--full',action='store_true')
         if action.prog.endswith('permission'):
@@ -141,14 +154,16 @@ def main():
         elif args.action == 'uninstall':
             if active_workers(data):
                 raise ValueError('Workers are active. Finish or stop them before uninstalling.')
-            import signal
-            subprocess.run(['launchctl','bootout','gui/'+str(os.getuid())+'/'+LABEL],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-            if healthy(data):
-                cfg,_ = endpoint(data)
-                os.kill(cfg['pid'],signal.SIGTERM)
-            (Path.home()/'Library/LaunchAgents'/(LABEL+'.plist')).unlink(missing_ok=True)
-            (Path.home()/'.local/bin/sidecar').unlink(missing_ok=True)
-            (Path.home()/'.codex/skills/sidecar-workers/SKILL.md').unlink(missing_ok=True)
+            if windows():
+                from .windows_install import uninstall
+                uninstall(data)
+            else:
+                subprocess.run(['launchctl','bootout','gui/'+str(os.getuid())+'/'+LABEL],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+                if healthy(data):
+                    request(data, 'shutdown', {})
+                (Path.home()/'Library/LaunchAgents'/(LABEL+'.plist')).unlink(missing_ok=True)
+                (Path.home()/'.local/bin/sidecar').unlink(missing_ok=True)
+                (Path.home()/'.codex/skills/sidecar-workers/SKILL.md').unlink(missing_ok=True)
             result = {'uninstalled':True,'data_preserved':str(data)}
         elif args.action == 'serve':
             from .service import serve
@@ -164,10 +179,10 @@ def main():
             target = thread_dir(data,tid)
             target.parent.mkdir(parents=True,exist_ok=True)
             for job in source.glob('devin-*/job.json'):
-                if json.loads(job.read_text()).get('thread_id') != tid:
+                if json.loads(job.read_text(encoding='utf-8')).get('thread_id') != tid:
                     raise ValueError('History contains a job belonging to another task')
             if not target.exists():
-                target.symlink_to(source,target_is_directory=True)
+                link_history(target, source)
             elif target.resolve() != source:
                 raise ValueError('Task already has a different history directory')
             result = {'thread_id':tid,'imported':str(source)}
@@ -175,8 +190,10 @@ def main():
             tid = identity(args.thread_id)
             if args.action == 'start':
                 body = vars(args).copy()
-                body.update(thread_id=tid, prompt=Path(args.file).read_text() if args.file else args.prompt, request_id=args.request_id or str(uuid.uuid4()))
+                body.update(thread_id=tid, prompt=Path(args.file).read_text(encoding='utf-8') if args.file else args.prompt, request_id=args.request_id or str(uuid.uuid4()))
                 result = request(data,'start',body)
+            elif args.action == 'reply':
+                result = request(data,'reply',{**vars(args),'thread_id':tid,'answer':Path(args.file).read_text(encoding='utf-8') if args.file else args.answer})
             elif args.action in ('permission','stop'):
                 result = request(data,args.action,{**vars(args),'thread_id':tid})
             else:

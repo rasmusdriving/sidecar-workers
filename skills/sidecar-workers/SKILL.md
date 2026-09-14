@@ -23,6 +23,14 @@ Devin is the default provider: SWE-2 High for most work, Max for important work 
 
 Write workers use native Devin Smart / Claude auto / Grok auto. Inspection uses Ask / plan / plan. These are provider permission modes, not OS sandboxes. Preserve user scope and do not enable bypass modes to get around a failure.
 
+### Connected tools in Devin
+
+Devin loads its own configured MCP servers and authentication. Codex plugin connections are not automatically forwarded by Sidecar. Diagnose with the installed Devin CLI's `mcp list` and `mcp login <server-name>` commands, then verify a fresh Sidecar worker with a minimal read-only call. Never copy credentials into prompts or worker logs.
+
+In the tested Devin ACP version, Ask mode (`--mode read_only`) omits shell execution and the MCP bridge tools. For an authorized task that needs GitHub, Supabase, or another MCP, use `--mode write` (native Smart) and explicitly state the allowed operations in the prompt. For inspection, say to make no file or remote changes and name the read-only calls to perform. Smart is not a read-only sandbox; if the user requires enforced read-only access, use a suitably restricted server or have the parent perform the reads instead. Do not switch to a bypass mode.
+
+Devin skills are separate from MCP connections. Use `devin skills paths` and `devin skills list` to check discovery; install only the relevant skill directories, including their referenced files, into a supported location. Recheck after plugin upgrades and start a fresh worker after authentication or skill changes.
+
 The result contains `worker_id`, `thread_id`, `job_dir`, and `preview_url`. Open the URL once with Codex's `open_in_codex` browser tool, or reuse the matching in-app tab. Do not create another tab for each worker. If using computer-use tools, mark the preview as a deliverable. Each Codex task has a separate URL on the same service.
 
 ## Follow through
@@ -42,6 +50,21 @@ sidecar permission WORKER_ID REQUEST_ID allow_once
 
 Use `deny` if it is outside scope, or obtain required authorization. Never approve a queue blindly. Requests expire after five minutes within the overall worker timeout. This coordinating permission queue currently supports Devin only; inspect Claude/Grok blocked results and resolve authorized follow-up work in the parent. Compare each provider's reported model with the requested model.
 
-`sidecar stop WORKER_ID` cancels only that task's named worker. Reuse an explicit `--request-id UUID` when retrying an uncertain start to avoid duplicate jobs. New sessions do not resume previous provider conversations; provide relevant prior context in follow-up jobs.
+`sidecar stop WORKER_ID` cancels only that task's named worker. Reuse an explicit `--request-id UUID` when retrying an uncertain start to avoid duplicate jobs. New starts do not resume previous provider conversations; provide relevant prior context in follow-up jobs. Replies to a pending clarification continue the existing conversation.
 
 If the CLI is missing, report that Sidecar needs installation from the project README. For an installed service problem, use `sidecar doctor`; do not recreate the old per-task preview scripts.
+
+
+## Clarifications and bounded exploration
+
+New workers may finish a turn with a structured clarification question. Sidecar reports `needs_input` with `questions` containing the question ID and text. Check status while workers are active and answer promptly with context already available to you:
+
+```sh
+sidecar reply WORKER_ID QUESTION_ID --answer "Concrete answer and relevant scope"
+```
+
+Use `--file` for a longer answer. Never answer an authorization question on the user's behalf without existing authorization. If required information is unavailable, ask the user and keep independent work moving. Polling status is still required: Sidecar cannot automatically wake a finished Codex turn. Do not leave active workers unattended at turn end.
+
+Replies use Claude/Grok's exact native session ID; Devin continues its open ACP session. They do not start a fresh conversation or change permission mode. Questions and replies survive preview-service restarts. Execution time pauses while awaiting a reply, with a separate `--question-timeout` (default 600 seconds), and a maximum of five questions per worker. Expired or stopped workers cannot receive new replies. Retrying the same answer is safe; changing an already submitted answer is rejected.
+
+Nested delegation is disabled by default (provider tool restriction for Claude/Grok, prompt instruction for Devin). Use `--allow-subagents` only if delegation is authorized and needed. Claude/Grok default to `--max-turns 24` per conversation turn; use `--max-turns N` to adjust it. All providers receive instructions to reserve time for synthesis and verification. These are work limits, not filesystem sandboxes.

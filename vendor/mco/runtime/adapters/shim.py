@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, TextIO
@@ -39,6 +39,11 @@ class ShimRunHandle:
     provider_result_path: Path
     stdout_file: TextIO
     stderr_file: TextIO
+    task: Optional[TaskInput] = None
+    question: Optional[Path] = None
+    session_id: Optional[str] = None
+    output_offset: int = 0
+    error_offset: int = 0
 
 
 _ENV_VARS_TO_STRIP = (
@@ -142,6 +147,7 @@ class ShimAdapterBase:
             provider_result_path=provider_result_path,
             stdout_file=stdout_file,
             stderr_file=stderr_file,
+            task=input_task,
         )
         return TaskRunRef(
             task_id=input_task.task_id,
@@ -180,6 +186,29 @@ class ShimAdapterBase:
                 message="run_handle_not_found",
             )
 
+        from ..coordinator import directory, parse_question, create_question, poll_reply
+        from ..message_stream import message_activity
+        if handle.question:
+            answer = poll_reply(handle.question)
+            if answer is not None:
+                # Resume the exact provider session, never the directory's latest session.
+                task = replace(handle.task, prompt=answer)
+                cmd = self._build_command(task) + ['--resume', handle.session_id]
+                handle.output_offset = handle.stdout_path.stat().st_size
+                handle.error_offset = handle.stderr_path.stat().st_size
+                handle.stdout_file = handle.stdout_path.open('a', encoding='utf-8')
+                handle.stderr_file = handle.stderr_path.open('a', encoding='utf-8')
+                env = _sanitize_env()
+                args, options = prepare_spawn(cmd, env)
+                try:
+                    handle.process = subprocess.Popen(args, cwd=task.repo_root, stdout=handle.stdout_file,
+                        stderr=handle.stderr_file, text=True, env=env, **options)
+                except Exception:
+                    self._close_io(handle)
+                    raise
+                handle.question = None
+            return TaskStatus(task_id=ref.task_id, provider=self.id, run_id=ref.run_id,
+                attempt_state="STARTED", completed=False, heartbeat_at=now_iso(), output_path=str(handle.provider_result_path), message="Waiting for coordinator" if handle.question else "Resuming conversation")
         return_code = handle.process.poll()
         if return_code is None:
             return TaskStatus(
@@ -199,7 +228,24 @@ class ShimAdapterBase:
 
         stdout_text = handle.stdout_path.read_text(encoding="utf-8") if handle.stdout_path.exists() else ""
         stderr_text = handle.stderr_path.read_text(encoding="utf-8") if handle.stderr_path.exists() else ""
-        success = self._is_success(return_code, stdout_text, stderr_text)
+        turn_stdout = handle.stdout_path.read_bytes()[handle.output_offset:].decode('utf-8')
+        turn_stderr = handle.stderr_path.read_bytes()[handle.error_offset:].decode('utf-8')
+        success = self._is_success(return_code, turn_stdout, turn_stderr)
+        state = message_activity(turn_stdout) if self.id in ('claude', 'grok') else {}
+        if handle.session_id and state.get('session_id') != handle.session_id:
+            raise RuntimeError('Provider resumed with a different or missing session identity')
+        question = parse_question(state.get('last_answer')) if success and directory() else None
+        if question:
+            sid = state.get('session_id')
+            if not sid or (handle.session_id and sid != handle.session_id):
+                raise RuntimeError('Cannot continue clarification: provider session identity missing or changed')
+            # Validate the ID before passing it to a provider command.
+            uuid.UUID(sid)
+            handle.session_id = sid
+            handle.question = create_question(question, sid)
+            return TaskStatus(task_id=ref.task_id, provider=self.id, run_id=ref.run_id,
+                attempt_state="STARTED", completed=False, heartbeat_at=now_iso(), output_path=str(handle.provider_result_path), message="Waiting for coordinating agent")
+        failure = None if success else (state.get('error') or turn_stderr.strip()[-2000:] or 'Provider exited with code ' + str(return_code))
         error_kind = None if success else classify_error(return_code, stderr_text)
         warnings = [warning.value for warning in detect_warnings(stderr_text)]
 
@@ -215,6 +261,8 @@ class ShimAdapterBase:
             "success": success,
             "error_kind": error_kind.value if error_kind else None,
             "warnings": warnings,
+            "error_message": failure,
+            "session_id": state.get("session_id"),
             "stdout_path": str(handle.stdout_path),
             "stderr_path": str(handle.stderr_path),
         }
@@ -231,7 +279,7 @@ class ShimAdapterBase:
             output_path=str(handle.provider_result_path),
             error_kind=error_kind,
             exit_code=return_code,
-            message="completed",
+            message="completed" if success else failure,
         )
 
     def cancel(self, ref: TaskRunRef) -> None:

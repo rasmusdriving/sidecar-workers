@@ -111,6 +111,27 @@ class DevinClient(AcpClient):
         return sid
 
     def prompt(self, session_id, text, timeout=600):
+        from ..coordinator import directory, parse_question, create_question, poll_reply
+        remaining = timeout
+        while True:
+            started = time.monotonic()
+            self._text = ''
+            self.record({'type':'turn_started','sessionId':session_id})
+            self._prompt_turn(session_id, text, timeout=max(.1, remaining))
+            remaining -= time.monotonic() - started
+            question = parse_question(self.collect_text()) if directory() else None
+            if not question:
+                return
+            path = create_question(question, session_id)
+            while True:
+                text = poll_reply(path)
+                if text is not None:
+                    break
+                time.sleep(.1)
+            if remaining <= 0:
+                raise RuntimeError('Worker execution budget exhausted')
+
+    def _prompt_turn(self, session_id, text, timeout=600):
         stop = threading.Event()
         def consume():
             while not stop.is_set():

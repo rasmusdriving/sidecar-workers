@@ -1,4 +1,5 @@
 import subprocess
+from .engine import setup
 
 def resolve_model(provider, model, effort):
     if provider == 'devin':
@@ -17,7 +18,10 @@ def resolve_model(provider, model, effort):
         raise ValueError('Grok workers use high reasoning')
     if not model or model == 'latest':
         import re
-        catalog = subprocess.run(['grok', 'models'], capture_output=True, text=True, check=True, timeout=20).stdout
+        setup()
+        from runtime.platform import prepare_spawn
+        cmd, options = prepare_spawn(['grok', 'models'])
+        catalog = subprocess.run(cmd, **options, capture_output=True, text=True, check=True, timeout=20).stdout
         models = set(re.findall(r'\bgrok-\d+(?:\.\d+)+\b', catalog))
         if not models:
             raise ValueError('Could not resolve the latest Grok model from the live catalog')

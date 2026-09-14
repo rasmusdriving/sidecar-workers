@@ -13,11 +13,19 @@ from unittest.mock import Mock, patch
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 from sidecar.common import ROOT, Lifecycle, atomic, worker_alive
-from sidecar.cli import ensure, healthy, endpoint
+from sidecar.cli import ensure, healthy, endpoint, request
+from sidecar.platform import detached_options
 from sidecar.service import Manager, thread_state
 
 
 class LifecycleTests(unittest.TestCase):
+    def test_existing_port_cannot_be_taken_over(self):
+        from http.server import BaseHTTPRequestHandler
+        from sidecar.service import LoopbackServer
+        with LoopbackServer(('127.0.0.1', 0), BaseHTTPRequestHandler) as first:
+            with self.assertRaises(OSError):
+                LoopbackServer(first.server_address, BaseHTTPRequestHandler)
+
     def test_server_startup_never_performs_reverse_dns(self):
         from http.server import BaseHTTPRequestHandler
         from sidecar.service import LoopbackServer
@@ -62,7 +70,8 @@ class ManagerTests(unittest.TestCase):
             second = self.manager.start(self.body)
         self.assertEqual(first, second)
         launch.assert_called_once()
-        self.assertTrue(launch.call_args.kwargs['start_new_session'])
+        for key, value in detached_options().items():
+            self.assertEqual(launch.call_args.kwargs[key], value)
 
     def test_thread_isolation_and_path_rejection(self):
         with patch('sidecar.service.subprocess.Popen',return_value=Mock(pid=123)):
@@ -82,7 +91,7 @@ class InstallTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             home = Path(root)
             responses = [Mock(returncode=0), Mock(returncode=0), Mock(returncode=0), Mock(returncode=113), Mock(returncode=0)]
-            with patch('sidecar.cli.Path.home', return_value=home), patch('sidecar.cli.sys.platform','darwin'), patch('sidecar.cli.subprocess.run', side_effect=responses) as run, patch('sidecar.cli.ensure'), patch('sidecar.cli.time.sleep'):
+            with patch('sidecar.cli.Path.home', return_value=home), patch('sidecar.cli.sys.platform','darwin'), patch('sidecar.cli.os.getuid', return_value=501, create=True), patch('sidecar.cli.subprocess.run', side_effect=responses) as run, patch('sidecar.cli.ensure'), patch('sidecar.cli.time.sleep'):
                 result = install(home / 'data')
             self.assertTrue(result['installed'])
             self.assertEqual([call.args[0][1] for call in run.call_args_list], ['bootout','print','print','print','bootstrap'])
@@ -110,7 +119,7 @@ class ProcessTests(unittest.TestCase):
                 proc.wait(timeout=3)
         if healthy(self.data):
             cfg,_ = endpoint(self.data)
-            os.kill(cfg['pid'],signal.SIGTERM)
+            request(self.data, 'shutdown', {})
             deadline = time.monotonic()+3
             while healthy(self.data) and time.monotonic()<deadline:
                 time.sleep(.02)
@@ -154,8 +163,12 @@ class ProcessTests(unittest.TestCase):
         job.mkdir(parents=True)
         atomic(job/'job.json',dict(thread_id=tid,timeout=10))
         # Exercise the real detached supervisor with a harmless fake execution engine.
-        code='import sys,os; import sidecar.worker as w; w.command=lambda *a: ([sys.executable,"-c","import time; time.sleep(3); print(42)"],dict(os.environ)); w.main()'
-        worker=subprocess.Popen([sys.executable,'-c',code,str(job),str(self.data)],cwd=ROOT,start_new_session=True)
+        # A release file keeps this deterministic even when Windows process queries are slow.
+        release = self.data / 'finish-worker'
+        self.addCleanup(release.touch)
+        engine = 'import sys,time\nfrom pathlib import Path\nwhile not Path(sys.argv[1]).exists(): time.sleep(.05)\nprint(42)'
+        code=f'import sys,os; import sidecar.worker as w; w.command=lambda *a: ([sys.executable,"-c",{engine!r},{str(release)!r}],dict(os.environ)); w.main()'
+        worker=subprocess.Popen([sys.executable,'-c',code,str(job),str(self.data)],cwd=ROOT,**detached_options())
         self.procs.append(worker)
         p=self.launch_service()
         time.sleep(.6)
@@ -164,9 +177,10 @@ class ProcessTests(unittest.TestCase):
         p.terminate();p.wait(timeout=3)
         self.assertIsNone(worker.poll())
         p2=self.launch_service()
-        worker.wait(timeout=5)
+        release.touch()
+        worker.wait(timeout=10)
         self.assertEqual(json.loads((job/'done.json').read_text())['status'],'complete')
-        p2.wait(timeout=3)
+        p2.wait(timeout=10)
 
     def test_concurrent_ensure_singleton(self):
         env={**os.environ,'SIDECAR_HOME':str(self.data)}
@@ -190,6 +204,23 @@ class ProcessTests(unittest.TestCase):
             urlopen(host+'/wrong/thread/'+str(uuid.uuid4())+'/state')
         self.assertEqual(error.exception.code,404)
         error.exception.close()
+
+    def test_shutdown_requires_authorization_and_no_active_workers(self):
+        (self.data/'app-open').touch()
+        process = self.launch_service()
+        cfg, host = endpoint(self.data)
+        with self.assertRaises(HTTPError) as error:
+            urlopen(Request(host+'/shutdown', b'{}', method='POST'))
+        self.assertEqual(error.exception.code, 403)
+        error.exception.close()
+        job = self.data / 'threads' / str(uuid.uuid4()) / ('devin-' + uuid.uuid4().hex)
+        job.mkdir(parents=True)
+        atomic(job / 'job.json', {})  # Supervisor initialization grace counts as active.
+        with self.assertRaisesRegex(ValueError, 'Workers are active'):
+            request(self.data, 'shutdown', {})
+        atomic(job / 'done.json', {'status': 'complete'})
+        self.assertEqual(request(self.data, 'shutdown', {}), {'stopping': True})
+        process.wait(timeout=5)
 
 if __name__=='__main__':
     unittest.main()

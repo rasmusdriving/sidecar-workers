@@ -10,6 +10,9 @@ def message_activity(raw):
     model = None
     status = 'running'
     final = None
+    session_id = None
+    last_answer = None
+    error = None
     recognized = False
 
     def block(key, content, replace=False):
@@ -40,6 +43,8 @@ def message_activity(raw):
         if not isinstance(e, dict):
             continue
         kind = e.get('type')
+        if not e.get('parent_tool_use_id') and e.get('session_id'):
+            session_id = e['session_id']
         recognized |= kind in ('system', 'stream_event', 'assistant', 'user', 'result')
         if kind == 'system' and e.get('model'):
             model = e['model']
@@ -69,6 +74,8 @@ def message_activity(raw):
             message = e.get('message', {})
             mid = message.get('id', current)
             model = message.get('model') or model
+            if not e.get('parent_tool_use_id'):
+                last_answer = '\n'.join(c.get('text', '') for c in message.get('content', []) if c.get('type') == 'text')
             for i, content in enumerate(message.get('content', [])):
                 # A completed text block may accompany the same streamed message.
                 if content.get('type') == 'text' and any(k[0] == mid and v.get('text') == content.get('text') for k, v in slots.items()):
@@ -89,14 +96,20 @@ def message_activity(raw):
                             except ValueError:
                                 pass
                         call['content'] = [{'type': 'content', 'content': {'type': 'text', 'text': output if isinstance(output, str) else json.dumps(output, ensure_ascii=False)}}]
-        elif kind == 'result':
+        elif kind == 'result' and not e.get('parent_tool_use_id'):
             status = 'failed' if e.get('is_error') or str(e.get('subtype', '')).startswith('error') else 'succeeded'
             final = e.get('result')
             if not final and e.get('errors'):
                 final = '\n'.join(map(str, e['errors']))
+            if status == 'failed':
+                error = final or e.get('stop_reason') or e.get('subtype') or 'Provider reported failure'
+                failed = [i for i in items if i.get('type') == 'tool' and i.get('status') == 'failed']
+                if failed:
+                    detail = ' '.join(c.get('content', {}).get('text', '') for c in failed[-1].get('content', []))
+                    error = str(error) + ': ' + failed[-1]['title'] + ': ' + detail[:2000]
     for item in items:
         item.pop('_input', None)
-    return {'items': items, 'model': model, 'status': status, 'final': final, 'recognized': recognized}
+    return {'items': items, 'model': model, 'status': status, 'final': final, 'recognized': recognized, 'session_id': session_id, 'last_answer': final if status == 'succeeded' and isinstance(final, str) else last_answer, 'error': error}
 
 
 def decode_messages(raw):

@@ -105,7 +105,9 @@ class DevinProtocolTests(unittest.TestCase):
             c.prompt('s', 'hello')
             self.assertEqual(c.collect_text(), 'Hello world')
             self.assertEqual(Path(root+'/devin.stdout.log').read_text(), 'Hello world')
-            self.assertEqual(len(Path(root+'/devin.stderr.events.jsonl').read_text().splitlines()), 2)
+            events = Path(root+'/devin.stderr.events.jsonl').read_text().splitlines()
+            self.assertEqual(len([e for e in events if 'session/update' in e]), 2)
+            self.assertIn('turn_started', events[0])
 
     def test_incomplete_turn_is_failure(self):
         c = self.client()

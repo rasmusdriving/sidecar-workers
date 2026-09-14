@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from typing import List
 
 from ..contracts import CapabilitySet, TaskInput
@@ -65,6 +67,10 @@ class ClaudeAdapter(ShimAdapterBase):
                 if key == "effort" and value not in ("medium", "high", "xhigh"):
                     raise ValueError("unsupported Claude effort: " + str(value))
                 cmd.extend(["--" + key, str(value)])
+        if os.environ.get('SIDECAR_ALLOW_SUBAGENTS') == '0':
+            cmd.extend(['--disallowedTools', 'Agent,Task'])
+        if os.environ.get('SIDECAR_MAX_TURNS'):
+            cmd.extend(['--max-turns', os.environ['SIDECAR_MAX_TURNS']])
         cmd.append(input_task.prompt)
         return cmd
 

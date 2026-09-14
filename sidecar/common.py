@@ -4,18 +4,30 @@ import subprocess
 import time
 import uuid
 from pathlib import Path
+from .platform import app_running, install_home, process_command
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
 def data_dir():
-    return Path(os.environ.get('SIDECAR_HOME', Path.home() / 'Library/Application Support/SidecarWorkers')).expanduser().resolve()
+    return Path(os.environ.get('SIDECAR_HOME', install_home())).expanduser().resolve()
 
 
 def atomic(path, value):
     tmp = path.with_name(path.name + '.' + uuid.uuid4().hex + '.tmp')
-    tmp.write_text(json.dumps(value))
-    tmp.replace(path)
+    tmp.write_text(json.dumps(value), encoding='utf-8')
+    try:
+        for attempt in range(20):
+            try:
+                tmp.replace(path)
+                break
+            except PermissionError:
+                # Windows readers can briefly hold a handle without delete sharing.
+                if attempt == 19:
+                    raise
+                time.sleep(.01)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def identity(value=None):
@@ -32,16 +44,16 @@ def jobs(data):
 
 def worker_alive(job):
     try:
-        pid = int((job / 'supervisor.pid').read_text())
-        command = subprocess.check_output(['ps', '-p', str(pid), '-o', 'command='], text=True).strip()
+        pid = int((job / 'supervisor.pid').read_text(encoding='utf-8'))
+        command = process_command(pid) or ''
         return 'sidecar.worker' in command and str(job) in command
-    except (ValueError, OSError, subprocess.CalledProcessError):
+    except (ValueError, OSError, subprocess.SubprocessError):
         # Imported legacy worker: use its MCO PID and exact artifact directory.
         try:
-            pid = int((job / 'worker.pid').read_text())
-            command = subprocess.check_output(['ps', '-p', str(pid), '-o', 'command='], text=True)
+            pid = int((job / 'worker.pid').read_text(encoding='utf-8'))
+            command = process_command(pid) or ''
             return 'mco' in command and str(job / 'artifacts') in command
-        except (ValueError, OSError, subprocess.CalledProcessError):
+        except (ValueError, OSError, subprocess.SubprocessError):
             return False
 
 
@@ -72,8 +84,3 @@ class Lifecycle:
         if self.absent_since is None:
             self.absent_since = now
         return now - self.absent_since >= self.grace
-
-
-def app_running():
-    commands = subprocess.check_output(['ps', '-axo', 'comm='], text=True).splitlines()
-    return any(c.strip().endswith(('/ChatGPT.app/Contents/MacOS/ChatGPT', '/Codex.app/Contents/MacOS/Codex')) for c in commands)

@@ -421,9 +421,11 @@ def _run_one_invocation(
             else:
                 invocation_status = "failed"
             return completed_result(invocation_status, status.message or status.attempt_state.lower(), status.exit_code)
-        active_deadline = stall_deadline
+        from .coordinator import paused_seconds
+        paused = paused_seconds()
+        active_deadline = stall_deadline + paused
         if hard_deadline is not None:
-            active_deadline = min(active_deadline, hard_deadline)
+            active_deadline = min(active_deadline, hard_deadline + paused)
         if global_deadline is not None:
             active_deadline = min(active_deadline, global_deadline)
         if time.monotonic() >= active_deadline:

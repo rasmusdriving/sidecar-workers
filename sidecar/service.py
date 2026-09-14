@@ -1,10 +1,10 @@
 """One loopback server for all Codex tasks, with independent worker supervisors."""
-import fcntl
 import hmac
 import json
 import os
 import re
 import secrets
+import socket
 import signal
 import subprocess
 import sys
@@ -15,6 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from socketserver import TCPServer
 from .common import ROOT, Lifecycle, active_workers, app_running, atomic, data_dir, identity, thread_dir, worker_alive
+from .platform import acquire_lock, spawn_detached, windows
 from .activity import snapshot
 from .models import resolve_model
 
@@ -23,6 +24,9 @@ class LoopbackServer(ThreadingHTTPServer):
     def server_bind(self):
         # HTTPServer normally performs reverse DNS here. This service only uses
         # 127.0.0.1; DNS must not delay startup or graceful shutdown.
+        if windows():
+            self.allow_reuse_address = False
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
         TCPServer.server_bind(self)
         self.server_name, self.server_port = self.server_address[:2]
 
@@ -32,7 +36,7 @@ def prepare(data):
     (data / 'threads').mkdir(exist_ok=True)
     path = data / 'service.json'
     if path.exists():
-        return json.loads(path.read_text())
+        return json.loads(path.read_text(encoding='utf-8'))
     value = {'token': secrets.token_urlsafe(32), 'port': 0}
     atomic(path, value)
     path.chmod(0o600)
@@ -42,12 +46,17 @@ def prepare(data):
 def thread_state(data, tid):
     workers = []
     for p in sorted(thread_dir(data, tid).glob('devin-*/job.json')):
-        if json.loads(p.read_text()).get('thread_id') != tid:
+        if json.loads(p.read_text(encoding='utf-8')).get('thread_id') != tid:
             continue
         state = snapshot(p.parent)
         state['id'] = p.parent.name
         workers.append(state)
     return {'thread_id': tid, 'workers': sorted(workers, key=lambda w: w.get('started', 0))}
+
+
+def worker_prompt(config):
+    delegation = 'Do not spawn or delegate to other agents.' if not config['allow_subagents'] else 'Keep any delegated work inside the execution budget.'
+    return config['prompt'] + '\n\nSidecar coordination contract:\n' + delegation + f" You have {config['timeout']} seconds of execution time. Limit initial exploration to relevant files, reserve at least half the budget for synthesis and verification, and return useful partial findings with limitations if necessary. Do not repeatedly re-explore established facts. " + 'If a missing answer prevents progress, finish your turn with ONLY a JSON object of this form: {"sidecar_question":"Your concise question with enough context for the coordinating agent"}. Sidecar will pause and deliver the reply in this same conversation. Do not use this format for rhetorical questions or final findings. Ask at most five questions. Permission approval is separate; a clarification does not expand the authorized scope.'
 
 
 class Manager:
@@ -79,6 +88,10 @@ class Manager:
             raise ValueError('Timeout must be between 10 and 86400 seconds')
         if not isinstance(body.get('prompt'), str) or not body['prompt'].strip():
             raise ValueError('Prompt is required')
+        question_timeout = int(body.get('question_timeout', 600))
+        max_turns = int(body.get('max_turns', 24))
+        if not 10 <= question_timeout <= 86400 or not 1 <= max_turns <= 200:
+            raise ValueError('Question timeout must be 10..86400; max turns must be 1..200')
         # Caller supplies a stable request ID so retries do not duplicate paid work.
         request_id = uuid.UUID(body['request_id']).hex
         with self.lock:
@@ -87,13 +100,13 @@ class Manager:
             job = folder / ('devin-' + request_id)
             if not job.exists():
                 job.mkdir()
-                config = dict(thread_id=tid, title=body.get('title', 'Worker'), repo=repo, provider=provider, model=model, effort=effort, mode=mode, timeout=timeout, started=time.time(), prompt=body['prompt'])
+                config = dict(thread_id=tid, title=body.get('title', 'Worker'), repo=repo, provider=provider, model=model, effort=effort, mode=mode, timeout=timeout, started=time.time(), prompt=body['prompt'], question_timeout=question_timeout, max_turns=max_turns, allow_subagents=bool(body.get('allow_subagents', False)))
                 atomic(job / 'job.json', config)
-                (job / 'prompt.txt').write_text(config['prompt'])
+                (job / 'prompt.txt').write_text(worker_prompt(config), encoding='utf-8')
                 try:
                     with (job / 'worker.log').open('a') as log:
-                        proc = subprocess.Popen([sys.executable, '-m', 'sidecar.worker', str(job), str(self.data)], cwd=ROOT, stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
-                    (job / 'supervisor.pid').write_text(str(proc.pid))
+                        proc = spawn_detached([sys.executable, '-m', 'sidecar.worker', str(job), str(self.data)], cwd=ROOT, stdin=subprocess.DEVNULL, stdout=log, stderr=log)
+                    (job / 'supervisor.pid').write_text(str(proc.pid), encoding='utf-8')
                     self.children.append(proc)
                 except Exception as exc:
                     atomic(job / 'done.json', {'status':'failed','exit_code':1,'finished':time.time(),'error':str(exc)})
@@ -104,7 +117,7 @@ class Manager:
         if not re.fullmatch(r'devin-[a-f0-9]+', wid):
             raise ValueError('Invalid worker ID')
         job = thread_dir(self.data, tid) / wid
-        config = json.loads((job / 'job.json').read_text())
+        config = json.loads((job / 'job.json').read_text(encoding='utf-8'))
         if config.get('thread_id') != tid:
             raise ValueError('Worker belongs to another task')
         return job
@@ -113,7 +126,7 @@ class Manager:
         job = self.job(identity(body['thread_id']), body['worker_id'])
         rid = uuid.UUID(body['request_id']).hex
         path = job / 'permissions' / (rid + '.request.json')
-        request = json.loads(path.read_text())
+        request = json.loads(path.read_text(encoding='utf-8'))
         if request['status'] != 'pending' or (job / 'done.json').exists():
             raise ValueError('Permission is no longer pending')
         decision = body['decision']
@@ -123,24 +136,38 @@ class Manager:
         atomic(path.with_name(rid + '.decision.json'), {'optionId': option})
         return {'id': rid, 'decision': decision}
 
+    def reply(self, body):
+        with self.lock:
+            job = self.job(identity(body['thread_id']), body['worker_id'])
+            rid = uuid.UUID(body['question_id']).hex
+            path = job / 'questions' / (rid + '.request.json')
+            question = json.loads(path.read_text(encoding='utf-8'))
+            answer = body.get('answer')
+            if not isinstance(answer, str) or not 0 < len(answer.strip()) <= 16000:
+                raise ValueError('Answer must contain 1..16000 characters')
+            reply = path.with_name(rid + '.reply.json')
+            if reply.exists():
+                if json.loads(reply.read_text(encoding='utf-8'))['answer'] != answer:
+                    raise ValueError('Question already has a different answer')
+                return {'id': rid, 'status': 'answered'}
+            if question['status'] != 'pending' or time.time() >= question['deadline'] or (job / 'done.json').exists() or (job / 'stop-requested.json').exists() or not worker_alive(job):
+                raise ValueError('Question is no longer pending on a live worker')
+            atomic(reply, {'answer': answer, 'created': time.time()})
+            return {'id': rid, 'status': 'answered'}
+
     def stop(self, body):
         job = self.job(identity(body['thread_id']), body['worker_id'])
         if not (job / 'done.json').exists() and worker_alive(job):
-            pid = int((job / 'supervisor.pid').read_text())
-            if os.getpgid(pid) != pid:
-                raise ValueError('Worker process group did not match; refusing to stop it')
-            os.killpg(pid, signal.SIGTERM)
+            atomic(job / 'stop-requested.json', {'created':time.time()})
         return {'worker_id': job.name, 'stop_requested': True}
 
 
 def serve(data=None, *, app_probe=app_running, grace=60, check_interval=2):
     data = data or data_dir()
     data.mkdir(parents=True, exist_ok=True, mode=0o700)
-    lock = (data / 'service.lock').open('w')
     try:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        lock = acquire_lock(data / 'service.lock', blocking=False)
     except BlockingIOError:
-        lock.close()
         return
     config = prepare(data)
     stopping = threading.Event()
@@ -203,6 +230,13 @@ def serve(data=None, *, app_probe=app_running, grace=60, check_interval=2):
                     result = manager.start(body)
                 elif self.path == '/permission':
                     result = manager.permission(body)
+                elif self.path == '/reply':
+                    result = manager.reply(body)
+                elif self.path == '/shutdown':
+                    if active_workers(data):
+                        raise ValueError('Workers are active. Finish or stop them before shutting down.')
+                    stopping.set()
+                    result = {'stopping': True}
                 elif self.path == '/stop':
                     result = manager.stop(body)
                 else:
