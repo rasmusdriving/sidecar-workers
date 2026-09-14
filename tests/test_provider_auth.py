@@ -96,7 +96,8 @@ class LoginTests(unittest.TestCase):
 
     def test_macos_login_script_quotes_paths_and_uses_terminal(self):
         with tempfile.TemporaryDirectory(prefix="auth ' å ") as root, \
-             patch('sidecar.auth.windows', return_value=False), patch('sidecar.auth.sys.platform', 'darwin'), \
+             patch('sidecar.auth.windows', return_value=False), \
+             patch('sidecar.auth.sys', Mock(platform='darwin', executable=sys.executable)), \
              patch('sidecar.auth.subprocess.run') as launch:
             binary = "/Applications/Devin ' test.app/devin"
             result = auth.open_login(Path(root), 'devin', binary)
