@@ -95,6 +95,8 @@ sidecar preview
 sidecar doctor
 ```
 
+`status` filters a supplied worker ID on the server. Its default compact response reads only the last 256 KiB of each activity log, returns a recent message (up to 3,000 characters), and includes pending permissions. Older messages and oversized records may be omitted from this recent view; `--full` and the browser preview retain complete history and can take longer for large tasks. The JSON envelope remains `{thread_id, workers: [...]}`.
+
 Task identity comes from `CODEX_THREAD_ID`, `CODEX_SESSION_ID`, or `CLAUDE_CODE_SESSION_ID`, in that order. Without one, pass `--thread-id UUID`. Use `--mode write` for authorized edits, `--file prompt.txt` for a longer prompt, and `--timeout SECONDS` to bound a worker. The CLI prints JSON and returns immediately after dispatch. Open the returned `preview_url` in the coordinating app's browser view. Workers within a task share the same page; all pages share one server.
 
 The CLI checks the local service automatically. Warm launches need no manual server setup. Cold starts use a singleton lock, including when several tasks connect at once. Reuse `--request-id UUID` for an uncertain retry to avoid dispatching the same job twice.
@@ -131,7 +133,7 @@ Use `--file answer.txt` for a longer reply, or `--thread-id UUID` outside the or
 
 Claude and Grok resume the exact native conversation ID. Devin continues the same open ACP session. Provider permission modes remain unchanged. This is a question/reply channel, not arbitrary messages into a running tool call. The orchestrating agent must check status; Sidecar cannot wake an idle coordinating task.
 
-Execution time pauses during clarification. `--question-timeout` defaults to 600 seconds per question, with up to five questions. Service restarts preserve pending questions and workers; machine restarts do not resume paid work automatically. Replies after expiry or stop are rejected.
+`--timeout` controls the invocation execution budget. Sidecar disables the engine's separate review deadline so workers can run beyond 30 minutes; the invocation limit and detached supervisor still enforce the worker budget. Execution time pauses during clarification. `--question-timeout` defaults to 600 seconds per question, with up to five questions. Service restarts preserve pending questions and workers; machine restarts do not resume paid work automatically. Replies after expiry or stop are rejected.
 
 Nested agents are disabled by default. Claude/Grok enforce this through their provider flags, while Devin receives a prompt instruction. Pass `--allow-subagents` only when needed and authorized. Claude/Grok use `--max-turns 24` per provider turn; this can be adjusted from 1 to 200. Every worker is instructed to reserve at least half its execution budget for synthesis and verification. Provider errors, including cancelled tools and exhausted turn budgets, are preserved in status and saved results.
 

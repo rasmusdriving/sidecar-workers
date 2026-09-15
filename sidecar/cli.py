@@ -10,6 +10,7 @@ import uuid
 from http.client import HTTPException
 from pathlib import Path
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from .common import ROOT, active_workers, atomic, data_dir, identity, install_skill, remove_skill, thread_dir
 
@@ -223,7 +224,10 @@ def main():
                 url = host+'/'+cfg['token']+'/thread/'+tid+'/'
                 result = {'thread_id':tid,'preview_url':url}
                 if args.action == 'status':
-                    with urlopen(url+'state',timeout=10) as response:
+                    query = {'compact': '0' if args.full else '1'}
+                    if args.worker_id:
+                        query['worker_id'] = args.worker_id
+                    with urlopen(url+'state?'+urlencode(query),timeout=10) as response:
                         result = json.load(response)
                     if args.worker_id:
                         result['workers'] = [w for w in result['workers'] if w['id']==args.worker_id]
@@ -233,7 +237,7 @@ def main():
                         for w in result['workers']:
                             items = w.pop('items',[])
                             w.pop('prompt',None)
-                            w['latest_message'] = next((i['text'][-3000:] for i in reversed(items) if i.get('type')=='message'), '')
+                            w['latest_message'] = w.get('latest_message') or next((i['text'][-3000:] for i in reversed(items) if i.get('type')=='message'), '')
                             w['permissions'] = [p for p in w.get('permissions',[]) if p['status']=='pending']
         print(json.dumps(result))
     except (ValueError, OSError, RuntimeError, subprocess.SubprocessError) as exc:

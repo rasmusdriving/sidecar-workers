@@ -5,11 +5,26 @@ setup()
 from runtime.message_stream import message_activity
 from runtime.coordinator import parse_question, paused_seconds
 
-def records(path):
+COMPACT_BYTES = 256 * 1024
+
+
+def read_activity(path, compact=False):
+    if not compact:
+        return path.read_text(encoding='utf-8', errors='replace')
+    with path.open('rb') as source:
+        size = source.seek(0, 2)
+        source.seek(max(0, size - COMPACT_BYTES))
+        raw = source.read(COMPACT_BYTES)
+        if size > COMPACT_BYTES:
+            raw = raw.partition(b'\n')[2]  # Discard the partial boundary record.
+        return raw.decode('utf-8', errors='replace')
+
+
+def records(path, compact=False):
     if not path.exists():
         return []
     result = []
-    for line in path.read_text(encoding='utf-8', errors='replace').splitlines():
+    for line in read_activity(path, compact).splitlines():
         try:
             result.append(json.loads(line))
         except ValueError:
@@ -17,12 +32,24 @@ def records(path):
     return result
 
 
-def snapshot(job):
+def snapshot(job, compact=False):
     meta = json.loads((job / 'job.json').read_text(encoding='utf-8'))
     meta.setdefault('provider', 'devin')
     items, calls = [], {}
     for path in sorted((job / 'artifacts').glob('run-*/provider-runs/*/raw/devin.stderr.events.jsonl')):
-        for event in records(path):
+        if compact and path.stat().st_size > COMPACT_BYTES:
+            # Session verification is at the beginning, outside the recent tail.
+            with path.open('rb') as source:
+                header = source.read(16 * 1024).split(b'\n')[:-1]
+            for line in header:
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if event.get('type') == 'session_ready':
+                    meta['verified_model'] = event.get('model')
+                    meta['verified_mode'] = event.get('mode')
+        for event in records(path, compact):
             if event.get('type') == 'turn_started' and items and items[-1]['type'] == 'message':
                 items.append({'type':'message','text':''})
             if event.get('type') == 'session_ready':
@@ -44,13 +71,13 @@ def snapshot(job):
                 calls[key].update({k: v for k, v in update.items() if k in ('title', 'status', 'kind', 'rawInput', 'content', 'locations')})
     if meta['provider'] != 'devin':
         for path in sorted((job / 'artifacts').glob('run-*/provider-runs/*/raw/' + meta['provider'] + '.stdout.log')):
-            parsed = message_activity(path.read_text(encoding='utf-8', errors='replace'))
+            parsed = message_activity(read_activity(path, compact))
             items.extend(parsed['items'])
             if parsed['model']:
                 meta['verified_model'] = parsed['model']
             if parsed['status'] == 'failed':
                 meta['provider_error'] = parsed['error'] or parsed['final']
-    events = records(job / 'stream.jsonl')
+    events = records(job / 'stream.jsonl', compact)
     for event in events:
         if event.get('type') == 'invocation_finished' and event.get('error'):
             if event['error'] != 'completed' and not meta.get('provider_error'):
@@ -61,7 +88,7 @@ def snapshot(job):
     meta['status'] = 'running'
     if done.exists():
         meta.update(json.loads(done.read_text(encoding='utf-8')))
-    if not items:
+    if not items or (compact and not any(i.get('type') == 'message' for i in items)):
         answer = ''.join(e.get('delta', '') for e in events if e.get('type') == 'output_delta')
         if answer:
             items.append({'type': 'message', 'text': answer})
@@ -79,5 +106,12 @@ def snapshot(job):
     meta['paused_seconds'] = paused_seconds(job / 'questions')
     meta['waiting_since'] = unanswered[0]['created'] if unanswered and meta['status'] == 'needs_input' else None
     if meta['status'] == 'failed':
-        meta['error'] = meta.get('provider_error') or meta.get('error') or ((job / 'stderr.log').read_text(encoding='utf-8', errors='replace')[-6000:] if (job / 'stderr.log').exists() else 'Worker exited without an error message')
+        meta['error'] = meta.get('provider_error') or meta.get('error') or (read_activity(job / 'stderr.log', compact)[-6000:] if (job / 'stderr.log').exists() else 'Worker exited without an error message')
+    if compact:
+        items = meta.pop('items')
+        meta.pop('prompt', None)
+        meta['latest_message'] = next((i['text'][-3000:] for i in reversed(items) if i.get('type') == 'message'), '')
+        meta['permissions'] = pending
+        # Compact status is a bounded recent view; full history remains available.
+        meta['activity_window_bytes'] = COMPACT_BYTES
     return meta
