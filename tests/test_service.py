@@ -279,6 +279,37 @@ serve(data, app_probe=probe, check_interval=.05)
             values.append(json.loads(out))
         self.assertEqual(len({v['pid'] for v in values}),1)
 
+    def test_cli_compact_and_filtered_full_status_over_http(self):
+        (self.data / 'app-open').touch()
+        self.launch_service()
+        tid = str(uuid.uuid4())
+        wid = 'devin-' + uuid.uuid4().hex
+        job = self.data / 'threads' / tid / wid
+        job.mkdir(parents=True)
+        atomic(job / 'job.json', {'thread_id': tid, 'prompt': 'test prompt'})
+        atomic(job / 'done.json', {'status': 'complete'})
+        atomic(job / 'stream.jsonl', {'type': 'output_delta', 'delta': 'Finished'})
+        other = job.parent / ('devin-' + uuid.uuid4().hex)
+        other.mkdir()
+        (other / 'job.json').write_text('unreadable unrelated worker')
+        for full in (False, True):
+            cmd = [sys.executable, '-m', 'sidecar', 'status', wid, '--thread-id', tid]
+            if full:
+                cmd.append('--full')
+            result = subprocess.run(cmd, cwd=ROOT, env={**os.environ, 'SIDECAR_HOME': str(self.data)},
+                                    capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            state = json.loads(result.stdout)
+            self.assertEqual(state['thread_id'], tid)
+            self.assertEqual(len(state['workers']), 1)
+            worker = state['workers'][0]
+            self.assertEqual(worker['status'], 'complete')
+            if full:
+                self.assertEqual(worker['items'][0]['text'], 'Finished')
+            else:
+                self.assertEqual(worker['latest_message'], 'Finished')
+                self.assertNotIn('items', worker)
+
     def test_browser_cannot_launch_workers(self):
         (self.data/'app-open').touch();self.launch_service()
         cfg,host=endpoint(self.data)

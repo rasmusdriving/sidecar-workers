@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 import uuid
+from urllib.parse import urlsplit, parse_qs
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from socketserver import TCPServer
@@ -44,12 +45,16 @@ def prepare(data):
     return value
 
 
-def thread_state(data, tid):
+def thread_state(data, tid, worker_id=None, compact=False):
     workers = []
-    for p in sorted(thread_dir(data, tid).glob('devin-*/job.json')):
+    if worker_id is not None and not re.fullmatch(r'devin-[a-f0-9]+', worker_id):
+        raise ValueError('Invalid worker ID')
+    folder = thread_dir(data, tid)
+    paths = [folder / worker_id / 'job.json'] if worker_id else sorted(folder.glob('devin-*/job.json'))
+    for p in paths:
         if json.loads(p.read_text(encoding='utf-8')).get('thread_id') != tid:
             continue
-        state = snapshot(p.parent)
+        state = snapshot(p.parent, compact=compact)
         state['id'] = p.parent.name
         workers.append(state)
     return {'thread_id': tid, 'workers': sorted(workers, key=lambda w: w.get('started', 0))}
@@ -212,13 +217,15 @@ def serve(data=None, *, app_probe=app_running, grace=60, check_interval=2):
             prefix = '/' + config['token']
             if self.path == prefix + '/health':
                 return self.reply(200, {'service':'sidecar-workers','pid':os.getpid()})
-            match = re.fullmatch(re.escape(prefix) + r'/thread/([0-9a-f-]{36})/(state)?', self.path)
+            parsed = urlsplit(self.path)
+            query = parse_qs(parsed.query)
+            match = re.fullmatch(re.escape(prefix) + r'/thread/([0-9a-f-]{36})/(state)?', parsed.path)
             if not match:
                 return self.reply(404, {'error':'Not found'})
             try:
                 tid = identity(match[1])
                 if match[2]:
-                    return self.reply(200, thread_state(data, tid))
+                    return self.reply(200, thread_state(data, tid, worker_id=query.get('worker_id', [None])[0], compact=query.get('compact') == ['1']))
                 self.reply(200, Path(__file__).with_name('preview.html').read_bytes(), 'text/html; charset=utf-8')
             except (ValueError, OSError) as exc:
                 self.reply(400, {'error':str(exc)})

@@ -27,7 +27,10 @@ def command(config, job, data):
         # JSON string syntax is valid in the YAML scalar used by MCO.
         (conf / 'agents.yaml').write_text('agents:\n  - name: devin\n    transport: acp\n    command: ' + json.dumps(shlex.quote(binary) + ' acp') + '\n', encoding='utf-8')
     provider = config['provider']
-    cmd = [sys.executable, str(engine / 'mco'), 'run', '--repo', config['repo'], '--agent', provider + ':' + config['model'], '--transport', 'acp' if provider == 'devin' else 'shim', '--execution-mode', config['mode'], '--file', str(job / 'prompt.txt'), '--invocation-hard-timeout', str(config['timeout']), '--result-mode', 'both', '--artifact-base', str(job / 'artifacts'), '--stream', 'jsonl']
+    # The invocation and supervisor enforce the execution budget, including
+    # clarification pauses. MCO's independent 30-minute review deadline must
+    # not truncate a longer worker or count time spent awaiting a reply.
+    cmd = [sys.executable, str(engine / 'mco'), 'run', '--repo', config['repo'], '--agent', provider + ':' + config['model'], '--transport', 'acp' if provider == 'devin' else 'shim', '--execution-mode', config['mode'], '--file', str(job / 'prompt.txt'), '--invocation-hard-timeout', str(config['timeout']), '--review-hard-timeout', '0', '--result-mode', 'both', '--artifact-base', str(job / 'artifacts'), '--stream', 'jsonl']
     if config.get('effort'):
         import json
         cmd += ['--provider-models-json', json.dumps({provider: {'effort': config['effort']}})]
